@@ -8,9 +8,12 @@ reproducible and never depends on model output beyond the spec itself.
 from __future__ import annotations
 
 import numpy as np
-from PIL import Image, ImageFilter
 
-from voxae.data.prep_masks import MIN_COMPONENT_AREA_PCT, label_components
+from voxae.data.prep_masks import (
+    MAX_COMPONENTS_PER_CLASS,
+    MIN_COMPONENT_AREA_PCT,
+    label_components,
+)
 from voxae.data.schemas import (
     ClassUnionTarget,
     ComponentsTarget,
@@ -24,12 +27,23 @@ class MaterializeError(ValueError):
 
 
 def dilate(mask: np.ndarray, radius_px: int) -> np.ndarray:
-    """Binary dilation with a square kernel (PIL MaxFilter; size must be odd)."""
+    """Binary dilation with a square kernel.
+
+    Uses scipy's separable maximum_filter (van Herk/Gil-Werman), which costs
+    O(1) per pixel regardless of kernel size. A naive per-pixel filter (e.g.
+    PIL's MaxFilter) costs O(kernel_area) per pixel instead, which turns a
+    single call into CPU-minutes at the large radii the schema allows (up to
+    512 px) on a full-resolution aerial frame.
+    """
     if radius_px <= 0:
         return mask
+    try:
+        from scipy import ndimage
+    except ImportError as e:  # pragma: no cover - environment-specific
+        raise RuntimeError(f"dilation requires the 'data' extra: uv sync --extra data ({e})") from e
+
     size = 2 * radius_px + 1
-    img = Image.fromarray(mask.astype(np.uint8) * 255)
-    return np.asarray(img.filter(ImageFilter.MaxFilter(size))) > 0
+    return ndimage.maximum_filter(mask, size=size, mode="constant", cval=False)
 
 
 def _component_attr(m: np.ndarray, attr: str, gsd: float) -> float:
@@ -64,9 +78,10 @@ def materialize(
         if target.min_component_area_pct:
             total = out.size
             kept = np.zeros_like(out)
-            for m in label_components(out):
-                if m.sum() * 100.0 / total >= target.min_component_area_pct:
-                    kept |= m
+            for m in label_components(
+                out, min_area_px=target.min_component_area_pct * total / 100.0
+            ):
+                kept |= m
             out = kept
         if not out.any():
             raise MaterializeError("constraints removed all target pixels")
@@ -106,8 +121,12 @@ def materialize(
 def _eligible_components(mask: np.ndarray) -> list[np.ndarray]:
     """Components in the same deterministic order used by prep_masks.
 
-    The same area floor is applied so comp_id ranks always line up with the
-    ComponentRecords the LLM saw in its prompt facts.
+    The same area floor and cap are applied so comp_id ranks always line up
+    with the ComponentRecords the LLM saw in its prompt facts.
     """
     total = mask.size
-    return [m for m in label_components(mask) if m.sum() * 100.0 / total >= MIN_COMPONENT_AREA_PCT]
+    return label_components(
+        mask,
+        min_area_px=MIN_COMPONENT_AREA_PCT * total / 100.0,
+        max_components=MAX_COMPONENTS_PER_CLASS,
+    )
