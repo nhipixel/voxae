@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+.python-version.local
+
+# Env / secrets
+.env
+*.key
+
+# Data & models
+data/raw/
+data/interim/
+data/processed/
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Experiment tracking
+wandb/
+outputs/
+runs/
+
+# Demo assets are fetched by script
+voxae/demo/assets/gallery/
+
+# 3D artifacts
+*.ply
+*.splat
+*.spz
+*.sog
+
+# Tooling caches
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Notebook checkpoints
+.ipynb_checkpoints/

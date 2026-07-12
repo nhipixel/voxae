@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use Voxae in your research, please cite it as below."
+title: "Voxae: language-grounded, metric 3D scene understanding for physical AI"
+authors:
+  - family-names: "Ngo"
+    given-names: "Nhi"
+year: 2026
+url: "https://github.com/nhipixel/voxae"
+license: Apache-2.0
