@@ -20,8 +20,8 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install (core + dev only — no heavy ML deps in CI)
-        run: uv sync --extra dev
+      - name: Install (core + dev + data; the ml/demo extras stay out of CI)
+        run: uv sync --extra dev --extra data
 
       - name: Lint
         run: uv run ruff check .
