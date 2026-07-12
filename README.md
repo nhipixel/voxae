@@ -26,8 +26,7 @@ A perception primitive for embodied agents (drones, robots, autonomous systems);
 Three query families, one system:
 - **Referring** — "the building with the red roof"
 - **Affordance** — "where could a small drone land safely?"
-- **Metric** — "is this gap wide enough for a 2.5 m vehicle?" *(answers computed from ground-sample distance — the part nobody else does)*
-
+- **Metric** — "is this gap wide enough for a 2.5 m vehicle?" *(answers computed from ground-sample distance)*
 ## Architecture (v0 — zero-shot baseline)
 
 `image + query → Qwen2.5-VL (structured grounding JSON) → SAM 2.1 → mask`
