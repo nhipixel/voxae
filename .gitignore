@@ -13,6 +13,7 @@ dist/
 *.key
 
 # Data & models
+data/downloads/
 data/raw/
 data/interim/
 data/processed/
