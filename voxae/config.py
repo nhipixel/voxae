@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +24,13 @@ class Settings(BaseSettings):
     # Demo behavior
     demo_max_image_px: int = 2048
     demo_rate_limit_per_min: int = 12
+
+    # Dataset pipeline
+    data_root: Path = Path("data")
+    qgen_model: str = "anthropic/claude-sonnet-5"
+    qgen_temperature: float = 0.7
+    qgen_queries_per_image: int = 6
+    qgen_timeout_s: float = 120.0
 
 
 def get_settings() -> Settings:
