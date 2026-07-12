@@ -41,11 +41,18 @@ def grid_cell(cx: float, cy: float, width: int, height: int) -> str:
     return GRID_NAMES[row][col]
 
 
-def label_components(mask: np.ndarray) -> list[np.ndarray]:
+def label_components(
+    mask: np.ndarray,
+    min_area_px: float = 0.0,
+    max_components: int | None = None,
+) -> list[np.ndarray]:
     """Split a boolean mask into per-component masks in deterministic order.
 
-    Order: area descending, then bbox top-left (y, then x). scipy's labeling
-    is itself deterministic; the explicit sort makes rank stable across runs.
+    Order: area descending, then bbox top-left (y, then x). Component areas
+    and bounding boxes are computed in bulk (``bincount`` + ``find_objects``)
+    without materializing any per-component array; only the components that
+    pass ``min_area_px`` and fall within ``max_components`` are then rendered.
+    A mask that fragments into thousands of specks therefore stays cheap.
     """
     try:
         from scipy import ndimage
@@ -55,13 +62,21 @@ def label_components(mask: np.ndarray) -> list[np.ndarray]:
         ) from e
 
     labeled, n = ndimage.label(mask)
-    comps: list[tuple[int, int, int, np.ndarray]] = []
-    for i in range(1, n + 1):
-        m = labeled == i
-        ys, xs = np.nonzero(m)
-        comps.append((int(m.sum()), int(ys.min()), int(xs.min()), m))
-    comps.sort(key=lambda t: (-t[0], t[1], t[2]))
-    return [m for _, _, _, m in comps]
+    if n == 0:
+        return []
+    areas = np.bincount(labeled.ravel())  # index 0 is background
+    boxes = ndimage.find_objects(labeled)  # bbox slice per label, cheap
+    stats: list[tuple[int, int, int, int]] = []  # (area, y0, x0, label)
+    for lbl in range(1, n + 1):
+        box = boxes[lbl - 1]
+        area = int(areas[lbl])
+        if box is None or area < min_area_px:
+            continue
+        stats.append((area, box[0].start, box[1].start, lbl))
+    stats.sort(key=lambda t: (-t[0], t[1], t[2]))
+    if max_components is not None:
+        stats = stats[:max_components]
+    return [labeled == lbl for _, _, _, lbl in stats]
 
 
 def extract_components(
@@ -73,14 +88,14 @@ def extract_components(
     """Connected components of one class mask, with spatial/metric descriptors."""
     h, w = mask.shape
     total = h * w
+    min_area_px = MIN_COMPONENT_AREA_PCT * total / 100.0
     records: list[ComponentRecord] = []
-    for comp_id, m in enumerate(label_components(mask)):
+    components = label_components(
+        mask, min_area_px=min_area_px, max_components=MAX_COMPONENTS_PER_CLASS
+    )
+    for comp_id, m in enumerate(components):
         area_px = int(m.sum())
         area_pct = area_px * 100.0 / total
-        if area_pct < MIN_COMPONENT_AREA_PCT:
-            break  # components are area-sorted; the rest are smaller
-        if comp_id >= MAX_COMPONENTS_PER_CLASS:
-            break
         ys, xs = np.nonzero(m)
         x1, y1, x2, y2 = float(xs.min()), float(ys.min()), float(xs.max() + 1), float(ys.max() + 1)
         cx, cy = float(xs.mean()), float(ys.mean())
