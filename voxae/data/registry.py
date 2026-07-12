@@ -40,12 +40,20 @@ class DatasetSpec:
     name: str
     license: str
     homepage: str
-    download_note: str
     mask_format: str  # "rgb" (color palette) or "index" (single-channel ids)
     class_table: dict[tuple[int, int, int] | int, str]  # color or index -> class name
     categories: dict[str, Category]  # class name -> unified category
     image_dir_hint: str  # relative layout hint used by iter_samples
     mask_dir_hint: str
+    # "mirrored": image/mask dirs are siblings at the same depth, paired by
+    #   their shared parent path (e.g. UAVid's seq*/Images vs seq*/Labels;
+    #   VDD's train/src vs train/gt) — required when filename stems repeat
+    #   across subfolders, since path context disambiguates them.
+    # "stem": image/mask dirs sit at different depths (e.g. Kaggle's SDD
+    #   mirror: training_set/images vs training_set/gt/semantic/label_images)
+    #   — pairing is by filename stem alone, which is only safe when stems
+    #   are unique dataset-wide (checked at iteration time).
+    pairing: str = "mirrored"
 
 
 def _uavid_spec() -> DatasetSpec:
@@ -53,10 +61,6 @@ def _uavid_spec() -> DatasetSpec:
         name="uavid",
         license="CC BY-NC-SA 4.0",
         homepage="https://uavid.nl/",
-        download_note=(
-            "Register at https://uavid.nl/ and download uavid_v1.5 (train + val). "
-            "Place the zip(s) in data/downloads/uavid/ and run: voxae dataset prepare uavid"
-        ),
         mask_format="rgb",
         class_table={
             (0, 0, 0): "clutter",
@@ -141,17 +145,13 @@ def _sdd_spec() -> DatasetSpec:
     return DatasetSpec(
         name="sdd",
         license="non-commercial (TU Graz Semantic Drone Dataset terms)",
-        homepage="https://dronedataset.icg.tugraz.at/",
-        download_note=(
-            "Accept the license at https://dronedataset.icg.tugraz.at/ and download the "
-            "semantic dataset. Place the zip in data/downloads/sdd/ and run: "
-            "voxae dataset prepare sdd"
-        ),
+        homepage="https://ivc.tugraz.at/research-project/semantic-drone-dataset/",
         mask_format="rgb",
         class_table=table,
         categories=cats,
         image_dir_hint="images",
         mask_dir_hint="label_images",
+        pairing="stem",
     )
 
 
@@ -162,10 +162,6 @@ def _vdd_spec() -> DatasetSpec:
         name="vdd",
         license="non-commercial research (VDD terms)",
         homepage="https://github.com/RussRobin/VDD",
-        download_note=(
-            "Download VDD via the links in https://github.com/RussRobin/VDD and place the "
-            "archive in data/downloads/vdd/, then run: voxae dataset prepare vdd"
-        ),
         mask_format="index",
         class_table={
             0: "other",
@@ -230,32 +226,60 @@ def decode_mask(spec: DatasetSpec, mask: np.ndarray) -> tuple[dict[str, np.ndarr
     return out, unknown_pct
 
 
-def iter_samples(spec: DatasetSpec, dataset_root: Path) -> Iterator[tuple[Path, Path]]:
-    """Yield (image_path, mask_path) pairs by pairing image/mask directory trees.
+class PairingError(RuntimeError):
+    """Raised when image/mask pairing is ambiguous (e.g. duplicate stems)."""
 
-    Pairs are matched by relative path and stem, so nested sequence layouts
-    (e.g. UAVid's seq*/Images) work without dataset-specific walkers.
+
+def _files_under_hint(dataset_root: Path, hint: str, image_exts: set[str]) -> Iterator[Path]:
+    hint_l = hint.lower()
+    for p in sorted(dataset_root.rglob("*")):
+        if p.suffix.lower() in image_exts and hint_l in (part.lower() for part in p.parts):
+            yield p
+
+
+def _mirrored_key(p: Path, dataset_root: Path, hint: str) -> str:
+    """Relative path with the hint directory itself removed — the shared prefix."""
+    rel = p.relative_to(dataset_root)
+    hint_l = hint.lower()
+    parts = tuple(part for part in rel.parent.parts if part.lower() != hint_l)
+    return "/".join(parts)
+
+
+def iter_samples(spec: DatasetSpec, dataset_root: Path) -> Iterator[tuple[Path, Path]]:
+    """Yield (image_path, mask_path) pairs for a dataset's directory layout.
+
+    Two pairing strategies (``spec.pairing``):
+    - "mirrored": image/mask trees are structurally symmetric (same relative
+      path once the hint folder is stripped) — required whenever filename
+      stems repeat across subfolders, since only path context disambiguates
+      them (e.g. UAVid's per-sequence frame numbering).
+    - "stem": image/mask dirs sit at different depths and aren't symmetric —
+      pairing is by filename stem alone. Raises if a stem is not unique
+      dataset-wide, since silent mispairing would corrupt ground truth.
     """
     image_exts = {".png", ".jpg", ".jpeg"}
-    masks: dict[tuple[str, str], Path] = {}
-    for p in sorted(dataset_root.rglob("*")):
-        if p.suffix.lower() in image_exts and spec.mask_dir_hint.lower() in (
-            part.lower() for part in p.parts
-        ):
-            rel = p.relative_to(dataset_root)
-            key_parts = tuple(
-                part for part in rel.parent.parts if part.lower() != spec.mask_dir_hint.lower()
-            )
-            masks[("/".join(key_parts), p.stem)] = p
 
-    for p in sorted(dataset_root.rglob("*")):
-        if p.suffix.lower() in image_exts and spec.image_dir_hint.lower() in (
-            part.lower() for part in p.parts
-        ):
-            rel = p.relative_to(dataset_root)
-            key_parts = tuple(
-                part for part in rel.parent.parts if part.lower() != spec.image_dir_hint.lower()
-            )
-            mask = masks.get(("/".join(key_parts), p.stem))
+    if spec.pairing == "stem":
+        masks_by_stem: dict[str, Path] = {}
+        for p in _files_under_hint(dataset_root, spec.mask_dir_hint, image_exts):
+            if p.stem in masks_by_stem:
+                raise PairingError(
+                    f"{spec.name}: duplicate mask stem '{p.stem}' "
+                    f"({masks_by_stem[p.stem]} and {p}) — stem-based pairing requires "
+                    f"unique filenames; use pairing='mirrored' instead"
+                )
+            masks_by_stem[p.stem] = p
+        for p in _files_under_hint(dataset_root, spec.image_dir_hint, image_exts):
+            mask = masks_by_stem.get(p.stem)
             if mask is not None:
                 yield p, mask
+        return
+
+    masks: dict[tuple[str, str], Path] = {}
+    for p in _files_under_hint(dataset_root, spec.mask_dir_hint, image_exts):
+        masks[(_mirrored_key(p, dataset_root, spec.mask_dir_hint), p.stem)] = p
+
+    for p in _files_under_hint(dataset_root, spec.image_dir_hint, image_exts):
+        mask = masks.get((_mirrored_key(p, dataset_root, spec.image_dir_hint), p.stem))
+        if mask is not None:
+            yield p, mask
