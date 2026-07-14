@@ -23,7 +23,7 @@ from voxae.data.materialize import MaterializeError, materialize
 from voxae.data.prep_masks import load_records
 from voxae.data.schemas import GenMeta, ImageRecord, QuerySample, QuerySpec
 
-PROMPT_VERSION = "qgen_v1"
+PROMPT_VERSION = "qgen_v2"
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 # chat_fn(system, user) -> raw model text; injectable for tests and provider swaps.

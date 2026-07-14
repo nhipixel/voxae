@@ -84,3 +84,38 @@ def test_metric_filter_no_match_raises(class_masks):
             class_masks,
             gsd_m_per_px=0.5,
         )
+
+
+def test_dilate_zero_radius_is_noop():
+    mask = np.zeros((20, 20), dtype=bool)
+    mask[5, 5] = True
+    assert np.array_equal(dilate(mask, 0), mask)
+
+
+def test_dilate_grows_by_exactly_radius():
+    mask = np.zeros((41, 41), dtype=bool)
+    mask[20, 20] = True  # single center pixel
+    grown = dilate(mask, radius_px=3)
+    # a square of side (2*3+1)=7 centered on (20,20)
+    expected = np.zeros((41, 41), dtype=bool)
+    expected[17:24, 17:24] = True
+    assert np.array_equal(grown, expected)
+
+
+def test_dilate_large_radius_on_large_image_is_fast():
+    # Regression test for the pathological case that made a single call take
+    # CPU-minutes: a large radius (near the schema's 512px cap) on a
+    # full-resolution aerial frame. scipy's separable maximum_filter must
+    # stay well under a second regardless of kernel size; a naive per-pixel
+    # filter (e.g. PIL's MaxFilter) would take minutes here.
+    import time
+
+    mask = np.zeros((2160, 3840), dtype=bool)
+    mask[1000:1100, 1800:1900] = True
+    t0 = time.perf_counter()
+    result = dilate(mask, radius_px=400)
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 2.0, (
+        f"dilate took {elapsed:.2f}s — expected O(1)-per-kernel-size, not O(kernel_area)"
+    )
+    assert result.sum() > mask.sum()

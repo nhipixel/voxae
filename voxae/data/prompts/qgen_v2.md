@@ -1,4 +1,4 @@
-# qgen_v1
+# qgen_v2
 
 ## system
 
@@ -12,6 +12,13 @@ query pairs text with a symbolic target the pipeline resolves to a mask; you
 never output geometry yourself. Rules:
 
 - Reference ONLY classes and component ids present in the facts.
+- These are SEMANTIC masks: touching instances of a class (e.g. adjacent
+  buildings) are merged into ONE component. Before phrasing a "components"
+  target as a single specific object ("the building on the left"), check
+  that component's area_pct — if it covers a large share of the image, it is
+  almost certainly a fused cluster, not one object. In that case either pick
+  a smaller, genuinely-isolated component, or phrase the query honestly as a
+  cluster/block/row rather than a single item.
 - Use metric facts ONLY when provided, and phrase thresholds close to the
   provided real-world dimensions so both satisfying and non-satisfying
   components exist where possible.

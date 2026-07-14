@@ -41,6 +41,33 @@ def test_extract_components_skips_specks():
     assert extract_components("road", "road", mask, None) == []
 
 
+def test_label_components_min_area_filters_and_keeps_order():
+    mask = _two_blob_mask()
+    # floor between the two blob sizes (400 < 500 < 900) drops the small one.
+    comps = label_components(mask, min_area_px=500)
+    assert len(comps) == 1
+    assert comps[0].sum() == 900
+
+
+def test_label_components_max_components_caps():
+    mask = _two_blob_mask()
+    comps = label_components(mask, max_components=1)
+    assert len(comps) == 1
+    assert comps[0].sum() == 900  # keeps the largest
+
+
+def test_label_components_ignores_speck_flood_cheaply():
+    # A single large blob plus a checkerboard of hundreds of 1px specks: the
+    # floor must drop every speck so only the blob is materialized (the case
+    # that previously exhausted memory by rendering every component).
+    mask = np.zeros((200, 200), dtype=bool)
+    mask[::2, ::2] = True  # 10,000 isolated 1px components
+    mask[20:60, 20:60] = True  # one 1,600 px blob
+    comps = label_components(mask, min_area_px=100, max_components=8)
+    assert len(comps) == 1
+    assert comps[0].sum() >= 1600
+
+
 def test_grid_cell_names():
     assert grid_cell(5, 5, 90, 90) == "top-left"
     assert grid_cell(45, 45, 90, 90) == "center"
