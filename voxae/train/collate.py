@@ -21,6 +21,13 @@ from voxae.model.qwen_backbone import SEG_TOKEN
 
 ASSISTANT_TEMPLATE = f"It is {SEG_TOKEN}."
 
+# Qwen2-VL expands one vision token per 28x28 patch, so a full-resolution aerial
+# frame becomes thousands of tokens and overruns max_length; truncating then
+# desynchronizes the image-token count from the text and the processor rejects
+# the batch. SAM2 receives the image at its own resolution on a separate branch,
+# so the language model only needs enough detail to place the <SEG> embedding.
+VLM_MAX_PX = 448  # about 256 vision tokens
+
 
 def load_samples(jsonl_path: Path, split: str | None = None) -> list[QuerySample]:
     samples = []
@@ -49,12 +56,13 @@ class VoxaeCollator:
     data_root: Path
     sam_image_size: int = 1024
     max_length: int = 512
+    vlm_max_px: int = VLM_MAX_PX
 
     def __call__(self, samples: list[QuerySample]) -> dict:
         images, texts, gt_masks, sam_pixels = [], [], [], []
         for s in samples:
             image = Image.open(self.data_root / s.rel_path).convert("RGB")
-            images.append(image)
+            images.append(self._vlm_image(image))
             messages = [
                 {
                     "role": "user",
@@ -85,6 +93,12 @@ class VoxaeCollator:
         batch["labels"] = batch["input_ids"].clone()
         batch["labels"][batch["attention_mask"] == 0] = -100
         return batch
+
+    def _vlm_image(self, image: Image.Image) -> Image.Image:
+        """Aspect-preserving copy bounded for the language model's token budget."""
+        img = image.copy()
+        img.thumbnail((self.vlm_max_px, self.vlm_max_px), Image.BILINEAR)
+        return img
 
     def _sam_pixels(self, image: Image.Image) -> torch.Tensor:
         """Square-resize + ImageNet-normalize for the SAM2 encoder."""
