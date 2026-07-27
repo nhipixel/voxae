@@ -29,6 +29,16 @@ ASSISTANT_TEMPLATE = f"It is {SEG_TOKEN}."
 VLM_MAX_PX = 448  # about 256 vision tokens
 
 
+def vlm_image(image: Image.Image, max_px: int = VLM_MAX_PX) -> Image.Image:
+    """Aspect-preserving RGB copy bounded to the language model's token budget.
+
+    Shared with inference: the model must see the same resolution it trained on.
+    """
+    img = image.convert("RGB")
+    img.thumbnail((max_px, max_px), Image.BILINEAR)
+    return img
+
+
 def load_samples(jsonl_path: Path, split: str | None = None) -> list[QuerySample]:
     samples = []
     with jsonl_path.open(encoding="utf-8") as f:
@@ -62,7 +72,7 @@ class VoxaeCollator:
         images, texts, gt_masks, sam_pixels = [], [], [], []
         for s in samples:
             image = Image.open(self.data_root / s.rel_path).convert("RGB")
-            images.append(self._vlm_image(image))
+            images.append(vlm_image(image, self.vlm_max_px))
             messages = [
                 {
                     "role": "user",
@@ -93,12 +103,6 @@ class VoxaeCollator:
         batch["labels"] = batch["input_ids"].clone()
         batch["labels"][batch["attention_mask"] == 0] = -100
         return batch
-
-    def _vlm_image(self, image: Image.Image) -> Image.Image:
-        """Aspect-preserving copy bounded for the language model's token budget."""
-        img = image.copy()
-        img.thumbnail((self.vlm_max_px, self.vlm_max_px), Image.BILINEAR)
-        return img
 
     def _sam_pixels(self, image: Image.Image) -> torch.Tensor:
         """Square-resize + ImageNet-normalize for the SAM2 encoder."""

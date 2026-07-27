@@ -37,12 +37,26 @@ class VoxaeSegPipeline:
         dtype: str = "float32",
     ) -> VoxaeSegPipeline:
         """Rebuild the model exactly as trained and load trainable weights."""
-        from voxae.model.qwen_backbone import add_seg_token, load_backbone
+        from voxae.model.qwen_backbone import (
+            LoraSettings,
+            add_seg_token,
+            apply_lora,
+            load_backbone,
+        )
         from voxae.model.sam2_head import Sam2DecoderHead
         from voxae.model.seg_bridge import VoxaeSegModel
 
+        state = torch.load(
+            Path(checkpoint_dir) / "state.pt", map_location="cpu", weights_only=False
+        )
+        cfg = state.get("config", {})
+
         backbone, processor = load_backbone(backbone_id, dtype=dtype)
         seg_token_id = add_seg_token(processor.tokenizer, backbone)
+        # LoRA renames the backbone's parameters, so it has to be reapplied at the
+        # same rank before the saved tensors can find their targets.
+        if cfg.get("lora", any("lora_" in name for name in state["trainable"])):
+            backbone = apply_lora(backbone, LoraSettings(**cfg.get("lora_settings", {})))
         sam_head = Sam2DecoderHead.from_pretrained(sam2_id)
         model = VoxaeSegModel(
             backbone,
@@ -50,23 +64,27 @@ class VoxaeSegPipeline:
             seg_token_id=seg_token_id,
             llm_hidden=backbone.config.get_text_config().hidden_size,
         )
-        state = torch.load(
-            Path(checkpoint_dir) / "state.pt", map_location="cpu", weights_only=False
-        )
+
         current = dict(model.named_parameters())
-        loaded = 0
+        missed = [
+            name
+            for name, tensor in state["trainable"].items()
+            if name not in current or current[name].shape != tensor.shape
+        ]
+        if missed:
+            raise RuntimeError(
+                f"{len(missed)} of {len(state['trainable'])} saved tensors did not match the "
+                f"rebuilt model (first: {missed[0]}). The checkpoint was trained under a "
+                "different configuration."
+            )
         for name, tensor in state["trainable"].items():
-            if name in current and current[name].shape == tensor.shape:
-                current[name].data.copy_(tensor)
-                loaded += 1
-        if loaded == 0:
-            raise RuntimeError(f"no trainable weights matched from {checkpoint_dir}")
+            current[name].data.copy_(tensor)
         return cls(model, processor, device=device)
 
     @torch.inference_mode()
     def predict(self, image: Image.Image, query: str) -> np.ndarray:
         """(image, query) -> full-resolution boolean mask."""
-        from voxae.train.collate import ASSISTANT_TEMPLATE
+        from voxae.train.collate import ASSISTANT_TEMPLATE, vlm_image
 
         messages = [
             {
@@ -76,7 +94,7 @@ class VoxaeSegPipeline:
             {"role": "assistant", "content": [{"type": "text", "text": ASSISTANT_TEMPLATE}]},
         ]
         text = self.processor.apply_chat_template(messages, tokenize=False)
-        inputs = self.processor(text=[text], images=[image.convert("RGB")], return_tensors="pt").to(
+        inputs = self.processor(text=[text], images=[vlm_image(image)], return_tensors="pt").to(
             self.device
         )
 

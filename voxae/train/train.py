@@ -65,7 +65,13 @@ def lr_lambda(step: int, warmup: int, total: int) -> float:
     return 0.5 * (1 + math.cos(math.pi * progress))
 
 
-def save_checkpoint(path: Path, model, optimizer, scheduler, step: int) -> None:
+def save_checkpoint(path: Path, model, optimizer, scheduler, step: int, cfg: dict) -> None:
+    """Persist trainable weights plus the config needed to rebuild the model.
+
+    Parameter names depend on whether LoRA wrapped the backbone and at what
+    rank, so inference cannot reconstruct a loadable model from the tensors
+    alone; the config travels with them.
+    """
     path.mkdir(parents=True, exist_ok=True)
     trainable = {name: p.detach().cpu() for name, p in model.named_parameters() if p.requires_grad}
     torch.save(
@@ -74,6 +80,7 @@ def save_checkpoint(path: Path, model, optimizer, scheduler, step: int) -> None:
             "optimizer": optimizer.state_dict(),
             "scheduler": scheduler.state_dict(),
             "step": step,
+            "config": cfg,
         },
         path / "state.pt",
     )
@@ -194,10 +201,10 @@ def train(config_path: Path, fresh: bool = False) -> None:
                     wandb.log(record, step=step)
 
             if step > 0 and step % cfg.get("save_every", 200) == 0:
-                save_checkpoint(latest, model, optimizer, scheduler, step)
+                save_checkpoint(latest, model, optimizer, scheduler, step, cfg)
             step += 1
 
-    save_checkpoint(latest, model, optimizer, scheduler, step)
+    save_checkpoint(latest, model, optimizer, scheduler, step, cfg)
     print(f"done at step {step}; checkpoint -> {latest}")
 
 

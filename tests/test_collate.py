@@ -7,10 +7,11 @@ pytest.importorskip("pycocotools")
 
 import numpy as np
 import torch
+from PIL import Image
 
 from voxae.data import rle
 from voxae.data.schemas import GenMeta, QuerySample
-from voxae.train.collate import VoxaeCollator, load_samples, mask_ce_labels
+from voxae.train.collate import VoxaeCollator, load_samples, mask_ce_labels, vlm_image
 
 
 def _sample(split=None):
@@ -45,6 +46,12 @@ def test_mask_ce_labels_ignores_prompt():
     labels = mask_ce_labels(ids, assistant_start=3)
     assert labels[:3].tolist() == [-100, -100, -100]
     assert labels[3:].tolist() == [4, 5]
+
+
+def test_vlm_image_bounds_size_and_keeps_aspect():
+    out = vlm_image(Image.new("RGB", (4000, 2000)), max_px=448)
+    assert max(out.size) == 448
+    assert out.size == (448, 224)
 
 
 def test_resize_mask_preserves_binary_values():
