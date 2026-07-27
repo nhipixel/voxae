@@ -1,5 +1,5 @@
 # Shippable training run: Qwen2-VL-2B-Instruct (Apache-2.0) on the full
-# dataset, sized for a Colab T4/L4 session. This checkpoint is the one that
+# dataset, sized for a Colab L4 session. This checkpoint is the one that
 # powers the public demo; the 7B config is an accuracy upgrade, not a
 # prerequisite for shipping.
 backbone_id: Qwen/Qwen2-VL-2B-Instruct

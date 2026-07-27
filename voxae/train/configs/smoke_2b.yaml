@@ -1,4 +1,5 @@
-# Overfit sanity run: 100 samples on a T4/L4. The 2B backbone is Apache-2.0
+# Overfit sanity run: 100 samples on an L4 (bfloat16 needs Ampere or newer;
+# Turing-class T4s have no hardware bf16). The 2B backbone is Apache-2.0
 # and is never shipped — it exists to prove the bridge learns before any 7B
 # spend. Success gate: train gIoU ~1.0 / loss_mask near zero on this subset.
 backbone_id: Qwen/Qwen2-VL-2B-Instruct
@@ -25,7 +26,7 @@ max_length: 512
 ce_weight: 1.0
 bce_weight: 2.0
 dice_weight: 0.5
-train_mask_decoder: false
+train_mask_decoder: true
 
 output_dir: outputs/smoke_2b
 log_every: 5
