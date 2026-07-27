@@ -24,6 +24,14 @@ class GrounderError(RuntimeError):
     """Raised when a grounding backend cannot produce a valid result."""
 
 
+class GrounderRequestError(GrounderError):
+    """The request itself is wrong (unknown model, oversized payload).
+
+    Separate from GrounderError because retrying an identical bad request only
+    burns the retry budget and delays a message the caller needs to see.
+    """
+
+
 class Grounder(Protocol):
     name: str
 
@@ -98,9 +106,17 @@ class QwenAPIGrounder:
                     headers=headers,
                     timeout=self.settings.vlm_timeout_s,
                 )
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    # The status alone is not actionable; the provider names the
+                    # unknown model, the size limit, or the quota in the body.
+                    detail = f"HTTP {resp.status_code}: {resp.text[:300]}"
+                    if resp.status_code == 429 or resp.status_code >= 500:
+                        raise GrounderError(detail)
+                    raise GrounderRequestError(detail)
                 text = resp.json()["choices"][0]["message"]["content"]
                 return GroundingResult.model_validate(extract_json(text))
+            except GrounderRequestError:
+                raise
             except (httpx.HTTPError, KeyError, GrounderError, ValueError) as e:
                 last_err = e
                 time.sleep(0.5)
