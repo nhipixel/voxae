@@ -80,6 +80,8 @@ def build_trained():
             backbone_id=settings.trained_backbone_id,
             sam2_id=settings.sam2_model,
             device=settings.device,
+            # Match the training dtype on GPU; CPU has no bfloat16 kernels worth using.
+            dtype="bfloat16" if settings.device.startswith("cuda") else "float32",
         )
     except Exception as e:  # a broken checkpoint must not take the Space down
         print(f"trained model unavailable: {e}")

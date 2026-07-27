@@ -86,6 +86,9 @@ def main() -> None:
     parser.add_argument("--data-root", type=Path, default=Path("data"))
     parser.add_argument("--limit", type=int)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--dtype", help="backbone dtype; defaults to bfloat16 on cuda, float32 on cpu"
+    )
     args = parser.parse_args()
 
     from voxae.train.collate import load_samples
@@ -100,8 +103,11 @@ def main() -> None:
     if args.predictor == "trained":
         from voxae.model.pipeline import VoxaeSegPipeline
 
+        # Full precision doubles the backbone's footprint for no accuracy the
+        # model ever had: it was trained in bfloat16.
+        dtype = args.dtype or ("bfloat16" if args.device.startswith("cuda") else "float32")
         predictor = VoxaeSegPipeline.from_checkpoint(
-            args.checkpoint, args.backbone, args.sam2, device=args.device
+            args.checkpoint, args.backbone, args.sam2, device=args.device, dtype=dtype
         )
     else:
         predictor = _ZeroShotAdapter()
