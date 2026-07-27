@@ -15,8 +15,10 @@ train_jsonl: data/processed/annotations/voxae_reason.jsonl
 data_root: data
 split: train
 
+# Accumulation stays low: the bridge needs optimizer steps more than it needs a
+# large effective batch, and accumulating 8 would cut this run to 616 updates.
 batch_size: 1
-grad_accum: 8
+grad_accum: 2
 epochs: 2
 lr: 2.0e-4
 warmup_steps: 100
