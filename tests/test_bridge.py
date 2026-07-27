@@ -44,6 +44,13 @@ def test_projector_maps_to_prompt_dim(sam_head):
     assert out.shape == (3, sam_head.prompt_dim)
 
 
+def test_projector_accepts_lower_precision_input(sam_head):
+    """A bfloat16 backbone feeds a full-precision projector."""
+    proj = SegProjector(llm_hidden=32, prompt_dim=sam_head.prompt_dim)
+    out = proj(torch.randn(3, 32, dtype=torch.bfloat16))
+    assert out.shape == (3, sam_head.prompt_dim)
+
+
 def test_encode_decode_shapes(sam_head):
     size = sam_head.input_image_size
     feats = sam_head.encode_images(torch.randn(2, 3, size, size))

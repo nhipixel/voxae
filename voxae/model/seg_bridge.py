@@ -30,7 +30,10 @@ class SegProjector(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        # The backbone runs in bfloat16 while this MLP stays in full precision:
+        # it is small, always trainable, and better conditioned that way. The
+        # SAM2 head casts again on its side, so only the input needs matching.
+        return self.net(x.to(self.net[0].weight.dtype))
 
 
 class VoxaeSegModel(nn.Module):
