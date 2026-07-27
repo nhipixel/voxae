@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     sam2_model: str = "facebook/sam2.1-hiera-small"
     device: str = "cpu"
 
+    # Trained bridge (demo loads it when a checkpoint directory is set)
+    checkpoint_dir: str = ""
+    trained_backbone_id: str = "Qwen/Qwen2-VL-2B-Instruct"
+
     # Demo behavior
     demo_max_image_px: int = 2048
     demo_rate_limit_per_min: int = 12
