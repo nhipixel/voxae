@@ -6,7 +6,7 @@ import pytest
 pytest.importorskip("pycocotools")
 
 from voxae.data import rle
-from voxae.data.qc import check_sample, run_qc
+from voxae.data.qc import check_sample, run_qc, text_template
 from voxae.data.schemas import GenMeta, QuerySample
 
 
@@ -74,6 +74,79 @@ def test_components_target_many_ids_large_area_passes():
     s.target = {"type": "components", "cls": "static_car", "comp_ids": [0, 1, 2, 3, 4]}
     s = QuerySample.model_validate(s.model_dump())
     assert check_sample(s) is None
+
+
+def test_trivial_affordance_target_fails():
+    # "where could a drone land?" -> the whole road class is a class lookup
+    # dressed as reasoning; the mask equals "segment the road".
+    s = _sample(text="where could a drone land safely?", family="affordance")
+    assert check_sample(s) == "trivial_affordance_target"
+
+
+def test_affordance_with_exclude_near_passes():
+    s = _sample(text="where could a drone land safely?", family="affordance")
+    s.target = {
+        "type": "class_union",
+        "classes": ["road"],
+        "exclude_near": {"cls": "tree", "radius_px": 40},
+    }
+    s = QuerySample.model_validate(s.model_dump())
+    assert check_sample(s) is None
+
+
+def test_affordance_with_multi_class_union_passes():
+    s = _sample(text="what surfaces can a heavy vehicle cross?", family="affordance")
+    s.target = {"type": "class_union", "classes": ["road", "gravel"]}
+    s = QuerySample.model_validate(s.model_dump())
+    assert check_sample(s) is None
+
+
+def test_referring_single_class_still_allowed():
+    # Only affordance carries the constraint requirement; naming a thing is
+    # exactly what referring queries are for.
+    s = _sample(text="highlight the road through the scene", family="referring")
+    assert check_sample(s) is None
+
+
+def test_spatial_text_with_unconstrained_union_fails():
+    s = _sample(text="shade near the bottom of the scene", family="referring")
+    assert check_sample(s) == "spatial_text_unconstrained_target"
+
+
+def test_spatial_text_with_components_target_passes():
+    # Small area: a genuine spatial subset, not a merged cluster.
+    s = _sample(text="the vehicles on the left side", family="referring", area_rows=(0, 5))
+    s.target = {"type": "components", "cls": "road", "comp_ids": [0]}
+    s = QuerySample.model_validate(s.model_dump())
+    assert check_sample(s) is None
+
+
+def test_text_template_strips_class_names():
+    from voxae.data.schemas import ClassUnionTarget
+
+    a = text_template("what would block a fire truck?", ClassUnionTarget(classes=["tree"]))
+    b = text_template("what would block a fire truck?", ClassUnionTarget(classes=["wall"]))
+    assert a == b  # same template, different class -> not distinct reasoning
+    assert "tree" not in a and "wall" not in b
+
+
+def test_run_qc_caps_template_reuse(tmp_path):
+    raw = tmp_path / "raw.jsonl"
+    lines = []
+    for i in range(6):  # same template, different images and classes
+        s = _sample(
+            text="what would block a fire truck here?",
+            family="affordance",
+            image_id=f"img{i}",
+            sample_id=f"s{i}",
+        )
+        s.target = {"type": "class_union", "classes": ["road", "gravel"]}
+        lines.append(QuerySample.model_validate(s.model_dump()).model_dump_json())
+    raw.write_text("\n".join(lines), encoding="utf-8")
+
+    report = run_qc(raw, tmp_path / "qc.jsonl", tmp_path / "r.json", max_template_reuse=3)
+    assert report.passed == 3
+    assert report.failures["template_overused"] == 3
 
 
 def test_run_qc_dedupes_and_reports(tmp_path):
