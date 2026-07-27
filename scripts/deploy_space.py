@@ -42,6 +42,7 @@ Code: https://github.com/nhipixel/voxae
 
 SPACE_REQUIREMENTS = """--extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.4
+torchvision>=0.19
 transformers>=4.53
 gradio>=6.20
 numpy>=1.26

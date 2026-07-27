@@ -28,6 +28,8 @@ dependencies = [
 # Heavy ML deps — GPU work happens on Linux cloud; local Windows installs CPU wheels.
 ml = [
     "torch>=2.4",
+    # SAM 2.1's image processor imports torchvision; Colab ships it, local venvs do not.
+    "torchvision>=0.19",
     "transformers>=4.53",
     "accelerate>=0.33",
     "safetensors>=0.4",
@@ -73,3 +75,8 @@ addopts = "-q"
 [tool.uv]
 # Keep CI light: heavy extras are opt-in.
 default-groups = []
+
+[dependency-groups]
+dev = [
+    "huggingface-hub>=1.23.0",
+]
