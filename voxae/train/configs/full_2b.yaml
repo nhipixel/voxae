@@ -1,0 +1,33 @@
+# Shippable training run: Qwen2-VL-2B-Instruct (Apache-2.0) on the full
+# dataset, sized for a Colab T4/L4 session. This checkpoint is the one that
+# powers the public demo; the 7B config is an accuracy upgrade, not a
+# prerequisite for shipping.
+backbone_id: Qwen/Qwen2-VL-2B-Instruct
+sam2_id: facebook/sam2.1-hiera-small
+load_in_4bit: false
+dtype: bfloat16
+lora: true
+lora_settings:
+  r: 16
+  alpha: 32
+
+train_jsonl: data/processed/annotations/voxae_reason.jsonl
+data_root: data
+split: train
+
+batch_size: 1
+grad_accum: 8
+epochs: 2
+lr: 2.0e-4
+warmup_steps: 100
+max_length: 512
+
+ce_weight: 1.0
+bce_weight: 2.0
+dice_weight: 0.5
+train_mask_decoder: true
+
+output_dir: outputs/full_2b
+log_every: 10
+save_every: 200
+# wandb_project: voxae

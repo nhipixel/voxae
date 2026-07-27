@@ -1,0 +1,33 @@
+# Overfit sanity run: 100 samples on a T4/L4. The 2B backbone is Apache-2.0
+# and is never shipped — it exists to prove the bridge learns before any 7B
+# spend. Success gate: train gIoU ~1.0 / loss_mask near zero on this subset.
+backbone_id: Qwen/Qwen2-VL-2B-Instruct
+sam2_id: facebook/sam2.1-hiera-small
+load_in_4bit: false
+dtype: bfloat16
+lora: true
+lora_settings:
+  r: 8
+  alpha: 16
+
+train_jsonl: data/processed/annotations/voxae_reason.jsonl
+data_root: data
+split: train
+limit: 100
+
+batch_size: 1
+grad_accum: 8
+epochs: 20
+lr: 3.0e-4
+warmup_steps: 20
+max_length: 512
+
+ce_weight: 1.0
+bce_weight: 2.0
+dice_weight: 0.5
+train_mask_decoder: false
+
+output_dir: outputs/smoke_2b
+log_every: 5
+save_every: 100
+# wandb_project: voxae

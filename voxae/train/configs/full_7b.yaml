@@ -1,0 +1,31 @@
+# Full training run on a rented A100 (40/80 GB): Qwen2.5-VL-7B (Apache-2.0)
+# in 4-bit with LoRA + trained SAM2 mask decoder.
+backbone_id: Qwen/Qwen2.5-VL-7B-Instruct
+sam2_id: facebook/sam2.1-hiera-small
+load_in_4bit: true
+dtype: bfloat16
+lora: true
+lora_settings:
+  r: 16
+  alpha: 32
+
+train_jsonl: data/processed/annotations/voxae_reason.jsonl
+data_root: data
+split: train
+
+batch_size: 2
+grad_accum: 8
+epochs: 2
+lr: 3.0e-4
+warmup_steps: 100
+max_length: 512
+
+ce_weight: 1.0
+bce_weight: 2.0
+dice_weight: 0.5
+train_mask_decoder: true
+
+output_dir: outputs/full_7b
+log_every: 10
+save_every: 200
+wandb_project: voxae
