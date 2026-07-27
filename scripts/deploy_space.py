@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -56,9 +57,13 @@ rich>=13.7
 
 @app.command()
 def deploy(
-    space_id: str = typer.Option(..., help="e.g. nhipixel/voxae"),
-    private: bool = typer.Option(False),
+    space_id: Annotated[str, typer.Option(help="e.g. nhipixel/voxae")],
+    checkpoint: Annotated[
+        Path | None, typer.Option(help="Directory holding state.pt; enables the trained column")
+    ] = None,
+    private: Annotated[bool, typer.Option()] = False,
 ) -> None:
+    """Push the app, the package, and optionally a trained checkpoint."""
     try:
         from huggingface_hub import HfApi
     except ImportError:
@@ -89,10 +94,30 @@ def deploy(
         path_in_repo="voxae",
         ignore_patterns=["__pycache__/*", "*.pyc"],
     )
+
+    if checkpoint:
+        state = checkpoint / "state.pt"
+        if not state.exists():
+            console.print(f"[red]{state} not found[/red]")
+            raise typer.Exit(1)
+        size_mb = state.stat().st_size / 1e6
+        console.print(f"uploading checkpoint ({size_mb:.0f} MB), this can take a few minutes...")
+        api.upload_file(
+            path_or_fileobj=str(state),
+            path_in_repo="checkpoint/state.pt",
+            repo_id=space_id,
+            repo_type="space",
+        )
+        console.print("[green]checkpoint uploaded -> checkpoint/state.pt[/green]")
+
     console.print(
         f"[bold green]Space deployed:[/bold green] https://huggingface.co/spaces/{space_id}"
     )
-    console.print("Add the VOXAE_VLM_API_KEY secret in Space settings for live mode.")
+    console.print(
+        "\nSpace settings -> Variables and secrets:\n"
+        "  VOXAE_VLM_API_KEY   (secret) enables the zero-shot baseline\n"
+        "  VOXAE_CHECKPOINT_DIR=checkpoint   (variable) enables the trained column"
+    )
 
 
 if __name__ == "__main__":

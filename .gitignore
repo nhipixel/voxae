@@ -17,6 +17,7 @@ data/downloads/
 data/raw/
 data/interim/
 data/processed/
+data/cache/
 *.safetensors
 *.pt
 *.pth
