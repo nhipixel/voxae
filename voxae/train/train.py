@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import shutil
 import time
 from pathlib import Path
 
@@ -89,7 +90,7 @@ def load_checkpoint(path: Path, model, optimizer, scheduler) -> int:
     return int(state["step"])
 
 
-def train(config_path: Path) -> None:
+def train(config_path: Path, fresh: bool = False) -> None:
     cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     out_dir = Path(cfg["output_dir"])
@@ -122,6 +123,11 @@ def train(config_path: Path) -> None:
 
     step = 0
     latest = out_dir / "latest"
+    # Resume is keyed on step count alone, so a finished run silently exits when
+    # relaunched. Changing the config is a different experiment, not a resume.
+    if fresh and latest.exists():
+        shutil.rmtree(latest)
+        print(f"discarded checkpoint at {latest}")
     if (latest / "state.pt").exists():
         step = load_checkpoint(latest, model, optimizer, scheduler)
         print(f"resumed from step {step}")
@@ -194,4 +200,6 @@ def train(config_path: Path) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
-    train(parser.parse_args().config)
+    parser.add_argument("--fresh", action="store_true", help="discard any existing checkpoint")
+    args = parser.parse_args()
+    train(args.config, fresh=args.fresh)
