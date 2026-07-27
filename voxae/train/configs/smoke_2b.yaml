@@ -16,8 +16,10 @@ data_root: data
 split: train
 limit: 100
 
+# No accumulation here: the point is many optimizer steps on few samples, and
+# accumulating 8 micro-batches turns 2000 forward passes into 250 updates.
 batch_size: 1
-grad_accum: 8
+grad_accum: 1
 epochs: 20
 lr: 3.0e-4
 warmup_steps: 20

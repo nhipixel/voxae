@@ -116,9 +116,13 @@ def train(config_path: Path, fresh: bool = False) -> None:
 
     steps_total = cfg.get("max_steps", len(loader) * cfg.get("epochs", 1))
     accum = cfg.get("grad_accum", 1)
+    # steps_total counts micro-batches, but LambdaLR advances once per optimizer
+    # step. Sizing the cosine in micro-batches leaves it a fraction of the way
+    # through its arc at the end of training, so the rate never anneals.
+    sched_total = max(1, steps_total // accum)
     optimizer = torch.optim.AdamW(model.trainable_parameters(), lr=cfg.get("lr", 3e-4))
     scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optimizer, lambda s: lr_lambda(s, cfg.get("warmup_steps", 50), steps_total)
+        optimizer, lambda s: lr_lambda(s, cfg.get("warmup_steps", 50), sched_total)
     )
 
     step = 0
