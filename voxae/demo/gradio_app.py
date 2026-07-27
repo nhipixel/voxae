@@ -233,7 +233,11 @@ def build_demo() -> gr.Blocks:
                     gr.Examples(examples=_example_pairs(), inputs=[image_in, query_in])
                 with gr.Column(scale=2):
                     with gr.Row():
-                        trained_out = gr.Image(label="Trained <SEG> bridge")
+                        # Hidden without a checkpoint: an empty pane beside a
+                        # filled one reads as broken rather than unavailable.
+                        trained_out = gr.Image(
+                            label="Trained <SEG> bridge", visible=TRAINED is not None
+                        )
                         baseline_out = gr.Image(label="Zero-shot baseline")
                     summary_out = gr.Markdown()
                     with gr.Accordion("Run details", open=False):

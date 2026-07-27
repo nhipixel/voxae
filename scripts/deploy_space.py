@@ -36,7 +36,7 @@ license: apache-2.0
 
 # Voxae — language-grounded, metric 3D scene understanding for physical AI
 
-Zero-shot baseline demo: hosted Qwen2.5-VL grounding + SAM 2.1 masks.
+Zero-shot baseline demo: hosted VLM grounding + SAM 2.1 masks.
 Code: https://github.com/nhipixel/voxae
 """
 
@@ -57,7 +57,7 @@ rich>=13.7
 
 @app.command()
 def deploy(
-    space_id: Annotated[str, typer.Option(help="e.g. nhipixel/voxae")],
+    space_id: Annotated[str, typer.Option(help="<hf-username>/voxae, e.g. nhibuilds/voxae")],
     checkpoint: Annotated[
         Path | None, typer.Option(help="Directory holding state.pt; enables the trained column")
     ] = None,
@@ -70,9 +70,17 @@ def deploy(
         console.print("[red]pip install huggingface_hub first (uv add huggingface_hub --dev)[/red]")
         raise typer.Exit(1) from None
 
+    # HF_TOKEN is not VOXAE_-prefixed, so pydantic-settings does not pick it up
+    # from .env; load the file explicitly before reading the environment.
+    from dotenv import load_dotenv
+
+    load_dotenv(ROOT / ".env")
     token = os.environ.get("HF_TOKEN", "")
     if not token:
-        console.print("[red]HF_TOKEN not set (env or .env)[/red]")
+        console.print(
+            "[red]HF_TOKEN not found.[/red] Add it to .env as HF_TOKEN=hf_... "
+            "(write-scoped token from https://huggingface.co/settings/tokens)"
+        )
         raise typer.Exit(1)
 
     api = HfApi(token=token)

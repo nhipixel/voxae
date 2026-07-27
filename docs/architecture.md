@@ -4,7 +4,7 @@
 
 ```
              ┌────────────────────────────┐
- image ─────▶│ Grounder (protocol)        │   hosted Qwen2.5-VL via any
+ image ─────▶│ Grounder (protocol)        │   any hosted VLM behind an
  query ─────▶│  QwenAPIGrounder | Mock    │   OpenAI-compatible endpoint
              └─────────────┬──────────────┘
                            │ GroundingResult (bbox + points, 0-1000 norm)

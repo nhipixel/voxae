@@ -29,7 +29,7 @@ Three query families, one system:
 - **Metric** — "is this gap wide enough for a 2.5 m vehicle?" *(answers computed from ground-sample distance)*
 ## Architecture (v0 — zero-shot baseline)
 
-`image + query → Qwen2.5-VL (structured grounding JSON) → SAM 2.1 → mask`
+`image + query → hosted VLM (structured grounding JSON) → SAM 2.1 → mask`
 
 The baseline is deliberately decoupled (Seg-Zero-style) and runs with **zero GPUs** — hosted VLM + CPU SAM. It is the floor every trained checkpoint must beat. Training the bridge replaces the text-coordinate handoff with a learned `<SEG>`-token bridge: the LLM's hidden state is projected directly into SAM's prompt space, and the bridge is trained end-to-end (QLoRA) on Voxae-Reason (datasheet: TBD).
 

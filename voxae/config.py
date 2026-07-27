@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     # VLM grounding backend (any OpenAI-compatible endpoint)
     vlm_api_key: str = ""
     vlm_base_url: str = "https://openrouter.ai/api/v1"
-    vlm_model: str = "qwen/qwen-2.5-vl-7b-instruct"
+    vlm_model: str = "qwen/qwen3.7-plus"
     vlm_timeout_s: float = 60.0
     vlm_max_retries: int = 2
 
