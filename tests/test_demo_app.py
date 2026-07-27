@@ -29,7 +29,7 @@ def test_build_trained_survives_bad_checkpoint(monkeypatch, tmp_path):
     assert gradio_app.build_trained() is None
 
 
-def test_run_comparison_returns_three_outputs(monkeypatch):
+def test_run_comparison_returns_overlays_summary_and_trace(monkeypatch):
     # Force mock backends: the module-level BASELINE may have been built with
     # a real API key from .env, and tests must never hit the network.
     from voxae.eval.baselines.zero_shot import ZeroShotPipeline
@@ -41,9 +41,10 @@ def test_run_comparison_returns_three_outputs(monkeypatch):
     monkeypatch.setattr(gradio_app, "BASELINE_LIVE", False)
 
     image = Image.new("RGB", (64, 48), (30, 90, 30))
-    trained, baseline, trace = gradio_app.run_comparison(image, "where can a drone land?")
+    trained, baseline, summary, trace = gradio_app.run_comparison(image, "where can a drone land?")
     assert trained is None  # no checkpoint configured
     assert baseline.size == image.size
+    assert "Zero-shot baseline" in summary
     assert trace["query"] == "where can a drone land?"
     assert "MOCK MODE" in trace["baseline"]["note"]
 
@@ -57,6 +58,19 @@ def test_run_comparison_rejects_empty_query():
 
 def test_build_demo_constructs():
     assert gradio_app.build_demo() is not None
+
+
+def test_example_pairs_carry_an_image_when_the_gallery_exists():
+    """One click has to load a runnable pair, not just a query."""
+    pairs = gradio_app._example_pairs()
+    assert pairs and all(len(p) == 2 for p in pairs)
+    if gradio_app._gallery_paths():
+        assert all(p[0] for p in pairs)
+
+
+def test_summary_line_names_an_empty_mask():
+    assert "no region matched" in gradio_app._summary_line("Trained bridge", 1.0, 0.0)
+    assert "12.5%" in gradio_app._summary_line("Trained bridge", 1.0, 12.5)
 
 
 def test_rate_limit_blocks_after_budget():
