@@ -25,9 +25,12 @@ lr: 3.0e-4
 warmup_steps: 20
 max_length: 512
 
+# Dice carries the same weight as BCE. On sparse targets a background-only
+# prediction scores well under BCE and near 1.0 under Dice, so a light Dice term
+# makes predicting nothing cheaper than predicting an imperfect mask.
 ce_weight: 1.0
 bce_weight: 2.0
-dice_weight: 0.5
+dice_weight: 2.0
 train_mask_decoder: true
 
 output_dir: outputs/smoke_2b

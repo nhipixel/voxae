@@ -24,7 +24,7 @@ max_length: 512
 
 ce_weight: 1.0
 bce_weight: 2.0
-dice_weight: 0.5
+dice_weight: 2.0
 train_mask_decoder: true
 
 output_dir: outputs/full_2b
