@@ -25,6 +25,22 @@ from voxae.data.schemas import QuerySample
 from voxae.eval.metrics import ciou, giou
 
 
+def _to_gt_resolution(pred: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    """Resample a prediction onto the ground-truth grid.
+
+    A predictor works at whatever resolution the image file happens to be, and
+    a packaged dataset may ship downscaled copies, while the RLE ground truth
+    stays at source resolution. Scoring resamples the prediction rather than
+    the target so the reference is never degraded to make a number agree.
+    """
+    if pred.shape == shape:
+        return pred
+    resized = Image.fromarray(pred.astype(np.uint8) * 255).resize(
+        (shape[1], shape[0]), Image.NEAREST
+    )
+    return np.asarray(resized) > 127
+
+
 def evaluate(
     predictor,
     samples: list[QuerySample],
@@ -46,6 +62,7 @@ def evaluate(
             pred = np.zeros((image.height, image.width), dtype=bool)
         latencies.append(time.perf_counter() - t0)
         gt = rle.decode(s.rle)
+        pred = _to_gt_resolution(pred, gt.shape)
         for key in ("all", str(s.family)):
             preds[key].append(pred)
             gts[key].append(gt)

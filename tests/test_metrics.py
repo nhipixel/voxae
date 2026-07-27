@@ -59,3 +59,20 @@ def test_ciou_weights_by_area():
 def test_giou_empty_lists_raise():
     with pytest.raises(ValueError):
         giou([], [])
+
+
+def test_prediction_is_resampled_onto_the_ground_truth_grid():
+    """Packaged datasets ship downscaled images; the RLE target does not shrink."""
+    from voxae.eval.run_eval import _to_gt_resolution
+
+    pred = _mask(4, 8, slice(0, 2), slice(0, 8))  # top half at image resolution
+    out = _to_gt_resolution(pred, (8, 16))
+    assert out.shape == (8, 16)
+    assert out[:4].all() and not out[4:].any()  # top half preserved
+
+
+def test_matching_resolution_is_returned_untouched():
+    from voxae.eval.run_eval import _to_gt_resolution
+
+    pred = _mask(4, 4, slice(0, 2), slice(0, 2))
+    assert _to_gt_resolution(pred, (4, 4)) is pred
