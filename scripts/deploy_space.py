@@ -40,10 +40,12 @@ Zero-shot baseline demo: hosted VLM grounding + SAM 2.1 masks.
 Code: https://github.com/nhipixel/voxae
 """
 
-SPACE_REQUIREMENTS = """--extra-index-url https://download.pytorch.org/whl/cpu
-torch>=2.4
+# Default PyPI torch, not the CPU-only index: a GPU Space needs CUDA kernels,
+# and the same wheel still runs on CPU hardware.
+SPACE_REQUIREMENTS = """torch>=2.4
 torchvision>=0.19
 transformers>=4.53
+peft>=0.11
 huggingface-hub>=0.34
 gradio>=6.20
 numpy>=1.26
