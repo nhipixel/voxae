@@ -478,11 +478,13 @@ Built in public. Code: [github.com/nhipixel/voxae](https://github.com/nhipixel/v
 
 def _theme() -> gr.Theme:
     """Dark, low-chrome, green accent matching the mask colour."""
+    # Fonts must be Font objects, not bare strings: Gradio compares themes by
+    # reading .name off each entry and a str has none.
     return gr.themes.Base(
         primary_hue=gr.themes.colors.emerald,
         neutral_hue=gr.themes.colors.slate,
-        font=("Inter", "ui-sans-serif", "system-ui", "sans-serif"),
-        font_mono=("JetBrains Mono", "ui-monospace", "monospace"),
+        font=(gr.themes.GoogleFont("Inter"), "system-ui", "sans-serif"),
+        font_mono=(gr.themes.GoogleFont("JetBrains Mono"), "ui-monospace", "monospace"),
     ).set(
         body_background_fill="#0a0c10",
         background_fill_primary="#11141a",
@@ -512,7 +514,8 @@ footer { display: none !important; }
 
 
 def build_demo() -> gr.Blocks:
-    with gr.Blocks(title="Voxae", theme=_theme(), css=CSS) as demo:
+    # Gradio 6 takes theme and css on launch(), not here.
+    with gr.Blocks(title="Voxae") as demo:
         gr.Markdown(ABOUT)
         if TRAINED is None:
             gr.Markdown(
@@ -598,7 +601,7 @@ def main() -> None:
 
     share = os.environ.get("VOXAE_SHARE", "").lower() in {"1", "true", "yes"}
     # Inference is serial on one accelerator, so queue rather than run concurrently.
-    build_demo().queue(default_concurrency_limit=1).launch(share=share)
+    build_demo().queue(default_concurrency_limit=1).launch(theme=_theme(), css=CSS, share=share)
 
 
 if __name__ == "__main__":
