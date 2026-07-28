@@ -42,6 +42,11 @@ def _gpu(duration: int):
 # of a query-conditioned model. Stock aerial photography follows, outside the
 # training distribution, so the limitation is something a visitor can see
 # rather than only read.
+# The first DATASET_EXAMPLES entries are held-out evaluation frames, each a
+# query the model measurably handles. The rest are stock aerial photography,
+# kept so the in-distribution caveat is something a visitor can try rather than
+# only read.
+DATASET_EXAMPLES = 5
 EXAMPLE_QUERIES: list[tuple[str, str]] = [
     (
         "Identify all ground surfaces, paved or otherwise cleared, that a heavy "

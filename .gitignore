@@ -31,8 +31,10 @@ wandb/
 outputs/
 runs/
 
-# Demo assets are fetched by script
-voxae/demo/assets/gallery/
+# Demo assets are fetched by script, except the dataset frames the worked
+# examples point at.
+voxae/demo/assets/gallery/*
+!voxae/demo/assets/gallery/uavid-*.png
 
 # 3D artifacts
 *.ply

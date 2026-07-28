@@ -18,3 +18,9 @@ All images sourced from Wikimedia Commons under open licenses (CC0 / CC BY / CC 
 | [Vista aérea del barrio Villa del Parque 01.jpg](https://commons.wikimedia.org/wiki/File:Vista_aérea_del_barrio_Villa_del_Parque_01.jpg) | ProtoplasmaKid | CC BY-SA 4.0 |
 | [A farmland in Atok.jpg](https://commons.wikimedia.org/wiki/File:A_farmland_in_Atok.jpg) | Jp442 | CC BY-SA 3.0 |
 | [Aerial view of orchards and farmland in Agabar, Somaliland, April 2024.jpg](https://commons.wikimedia.org/wiki/File:Aerial_view_of_orchards_and_farmland_in_Agabar,_Somaliland,_April_2024.jpg) | BahabarAdenArchives | CC BY 4.0 |
+
+## Dataset frames
+
+Demo examples prefixed `uavid-` are frames from the UAVid dataset
+(https://uavid.nl), licensed CC BY-NC-SA 4.0. Redistributed here
+unmodified for non-commercial demonstration under the same licence.
