@@ -58,3 +58,17 @@ def test_repair_also_restores_brace_balance():
 def test_well_formed_output_is_never_rewritten():
     text = '{"bbox": {"x1": 1, "y1": 2, "x2": 3, "y2": 4}, "points": [{"x": 5, "y": 6}]}'
     assert extract_json(text)["points"] == [{"x": 5, "y": 6}]
+
+
+def test_fenced_array_of_regions_yields_the_first_object():
+    """Asked for one region, models sometimes fence a whole list of them."""
+    text = (
+        '```json\n[\n  {"bbox": [292, 0, 393, 162], "points": [{"x": 3, "y": 6}]},\n'
+        '  {"bbox": [415, 211, 479, 368], "points": [{"x": 4, "y": 5}]}\n]\n```'
+    )
+    assert extract_json(text)["bbox"] == [292, 0, 393, 162]
+
+
+def test_fenced_object_with_repairable_points():
+    text = '```json\n{"bbox": [7, 0, 9, 4], "points": [{"x": 920, 280]]}\n```'
+    assert extract_json(text)["points"] == [{"x": 920, "y": 280}]

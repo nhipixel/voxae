@@ -91,12 +91,21 @@ def _repair_known_slips(text: str) -> str:
     return _BARE_SECOND_COORD.sub(r'{"x": \1, "y": \2}', text)
 
 
+_FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
+
+
 def extract_json(text: str) -> dict:
-    """Pull the first JSON object out of possibly-noisy model output."""
+    """Pull the first JSON object out of possibly-noisy model output.
+
+    A fence is unwrapped rather than matched against, because models sometimes
+    fence a whole array of regions; scanning the body then yields the first
+    object instead of a fragment cut at the wrong brace.
+    """
+    fence = _FENCE.search(text)
+    body = fence.group(1) if fence else text
     last_error: Exception | None = None
-    for source in (text, _repair_known_slips(text)):
-        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", source, re.DOTALL)
-        candidate = fenced.group(1) if fenced else _first_json_object(source)
+    for source in (body, _repair_known_slips(body)):
+        candidate = _first_json_object(source)
         if candidate is None:
             continue
         try:
