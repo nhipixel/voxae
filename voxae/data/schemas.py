@@ -17,10 +17,11 @@ so every ground-truth mask is exactly reproducible from its spec.
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from voxae.compat import StrEnum
 
 NORM_MAX = 1000
 

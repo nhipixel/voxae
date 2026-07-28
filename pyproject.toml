@@ -3,7 +3,8 @@ name = "voxae"
 version = "0.1.0"
 description = "Language-grounded, metric 3D scene understanding for physical AI"
 readme = "README.md"
-requires-python = ">=3.11,<3.13"
+# 3.10 because Hugging Face ZeroGPU images ship it and the demo has to run there.
+requires-python = ">=3.10,<3.14"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Nhi Ngo" }]
 keywords = [
@@ -62,7 +63,7 @@ packages = ["voxae"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]

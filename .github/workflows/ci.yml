@@ -11,6 +11,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        # 3.10 is what Hugging Face ZeroGPU ships; without it here, a 3.11-only
+        # import passes CI and fails on the deployed Space.
+        python: ["3.10", "3.12"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -19,6 +22,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          python-version: ${{ matrix.python }}
 
       - name: Install (core + dev + data; the ml/demo extras stay out of CI)
         run: uv sync --extra dev --extra data

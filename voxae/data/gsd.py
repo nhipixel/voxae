@@ -16,7 +16,8 @@ Confidence tiers (metric queries are only generated at HIGH confidence):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
+
+from voxae.compat import StrEnum
 
 
 class GSDConfidence(StrEnum):
