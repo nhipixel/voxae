@@ -51,6 +51,7 @@ def curate(
     n: Annotated[int, typer.Option(help="Examples to copy")] = 6,
     min_trained_iou: Annotated[float, typer.Option()] = 0.6,
     min_area_pct: Annotated[float, typer.Option()] = 4.0,
+    max_per_image: Annotated[int, typer.Option(help="Queries per frame")] = 3,
 ) -> None:
     """Copy the best-scoring UAVid frames into the gallery and print the pairs."""
     from voxae.train.collate import load_samples
@@ -75,14 +76,16 @@ def curate(
             f"no UAVid samples with trained IoU >= {min_trained_iou} and area >= {min_area_pct}%"
         )
 
-    # One example per image: several queries over one frame reads as padding.
+    # Several queries over one frame is the point of the demo, not padding:
+    # identical pixels, a different question, a different mask. Capped so one
+    # photogenic frame cannot fill the whole gallery.
     chosen: list[tuple[float, str]] = []
-    seen_images: set[str] = set()
+    per_image: dict[str, int] = {}
     for score, sid in ranked:
         image_id = samples[sid].image_id
-        if image_id in seen_images:
+        if per_image.get(image_id, 0) >= max_per_image:
             continue
-        seen_images.add(image_id)
+        per_image[image_id] = per_image.get(image_id, 0) + 1
         chosen.append((score, sid))
         if len(chosen) == n:
             break
@@ -92,8 +95,11 @@ def curate(
     lines = []
     for score, sid in chosen:
         s = samples[sid]
-        dest = GALLERY / f"{sid}{Path(s.rel_path).suffix}"
-        shutil.copy2(data_root / s.rel_path, dest)
+        # Named by frame, not by sample: the gallery deduplicates by content,
+        # so several queries over one frame must point at one copied file.
+        dest = GALLERY / f"uavid-{s.image_id}{Path(s.rel_path).suffix}"
+        if not dest.exists():
+            shutil.copy2(data_root / s.rel_path, dest)
         console.print(f"  {sid}  IoU {score:.2f}  -> {dest.name}")
         lines.append(f'    ("{s.text}", "{dest.stem}"),')
 
