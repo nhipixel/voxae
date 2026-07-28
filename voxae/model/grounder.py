@@ -48,15 +48,43 @@ SYSTEM_PROMPT = (
 )
 
 
+def _first_json_object(text: str) -> str | None:
+    """First balanced {...} in the text, ignoring braces inside strings.
+
+    Models asked for one region sometimes return several, comma-separated. A
+    greedy regex spans them all and fails to parse; taking the first complete
+    object keeps the answer the prompt asked for.
+    """
+    start = depth = 0
+    in_string = escaped = False
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
+
+
 def extract_json(text: str) -> dict:
     """Pull the first JSON object out of possibly-noisy model output."""
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    candidate = fenced.group(1) if fenced else None
+    candidate = fenced.group(1) if fenced else _first_json_object(text)
     if candidate is None:
-        brace = re.search(r"\{.*\}", text, re.DOTALL)
-        if brace is None:
-            raise GrounderError(f"no JSON object found in model output: {text[:200]!r}")
-        candidate = brace.group(0)
+        raise GrounderError(f"no JSON object found in model output: {text[:200]!r}")
     try:
         return json.loads(candidate)
     except json.JSONDecodeError as e:

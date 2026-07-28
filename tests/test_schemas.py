@@ -45,3 +45,14 @@ def test_grounding_result_requires_at_least_one_point():
     payload = {"bbox": {"x1": 0, "y1": 0, "x2": 10, "y2": 10}, "points": []}
     with pytest.raises(ValidationError):
         GroundingResult.model_validate(payload)
+
+
+def test_grounding_accepts_array_boxes_and_parallel_array_points():
+    """Hosted models emit these shapes regardless of the requested schema."""
+    from voxae.data.schemas import GroundingResult
+
+    r = GroundingResult.model_validate(
+        {"bbox": [292, 0, 393, 162], "points": [{"x": [333, 60], "y": [60, 120]}]}
+    )
+    assert (r.bbox.x1, r.bbox.y2) == (292, 162)
+    assert [(p.x, p.y) for p in r.points] == [(333, 60), (60, 120)]

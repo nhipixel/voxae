@@ -96,6 +96,27 @@ class GroundingResult(BaseModel):
     points: list[PointNorm] = Field(min_length=1, max_length=4)
     rationale: str = ""
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_points(cls, data):
+        """Expand parallel-array points and cap the list.
+
+        Asked for several points, models often answer with one object holding
+        arrays ({"x": [a, b], "y": [c, d]}) rather than several objects. The
+        coordinates are usable either way, so read them rather than discard the
+        whole response.
+        """
+        if not isinstance(data, dict) or not isinstance(data.get("points"), list):
+            return data
+        flat: list = []
+        for p in data["points"]:
+            if isinstance(p, dict) and isinstance(p.get("x"), list | tuple):
+                xs, ys = p.get("x") or [], p.get("y") or []
+                flat.extend({"x": x, "y": y} for x, y in zip(xs, ys, strict=False))
+            else:
+                flat.append(p)
+        return {**data, "points": flat[:4]}
+
     @classmethod
     def json_schema_prompt(cls) -> str:
         """Compact schema description embedded in the VLM prompt."""
