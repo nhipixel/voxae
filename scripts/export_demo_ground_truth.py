@@ -2,7 +2,7 @@
 
 The demo can score itself only where a correct answer exists. Its first
 examples are held-out evaluation samples, so their masks are exported here as
-RLE and shipped with the app; every other input, including anything a visitor
+PNG and shipped with the app; every other input, including anything a visitor
 uploads, has no ground truth and is reported as unscored.
 
 Keyed by query text: the demo knows the query a visitor clicked, not which
@@ -36,7 +36,7 @@ def export(
     split: Annotated[str, typer.Option()] = "test",
     out: Annotated[Path, typer.Option()] = OUT,
 ) -> None:
-    """Write RLE ground truth for every dataset-backed demo example."""
+    """Write ground truth masks for every dataset-backed demo example."""
     from voxae.data import rle
     from voxae.demo.gradio_app import DATASET_EXAMPLES, EXAMPLE_QUERIES
     from voxae.train.collate import load_samples
@@ -75,9 +75,7 @@ def export(
         shipped = next(gallery.glob(f"*{stem}.*"), None)
         source = shipped or (data_root / s.rel_path)
         digest = hashlib.md5(Image.open(source).convert("RGB").tobytes()).hexdigest()
-        # Stored as PNG, not RLE: decoding RLE needs pycocotools, and the demo
-        # should not carry a compiled COCO dependency to show five masks. A
-        # 1-bit PNG is smaller anyway.
+        # PNG rather than RLE so the demo needs no pycocotools.
         mask = rle.decode(s.rle)
         buf = io.BytesIO()
         Image.fromarray(mask).convert("1").save(buf, format="PNG", optimize=True)

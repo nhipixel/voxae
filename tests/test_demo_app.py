@@ -131,3 +131,61 @@ def test_api_rejects_an_unusable_image_payload():
 
     with pytest.raises(gr.Error):
         gradio_app._as_image(12345)
+
+
+class _BrokenBaseline:
+    """Stands in for the hosted VLM having a bad day."""
+
+    name = "broken"
+
+    def run(self, image, query):
+        raise RuntimeError("GrounderError: upstream said no")
+
+
+class _FakeTrained:
+    """A trained bridge that answers, so the baseline is the only failure."""
+
+    name = "fake-bridge"
+
+    def predict_logits(self, image, query):
+        import numpy as np
+
+        logits = np.full((image.height, image.width), -4.0, dtype="float32")
+        logits[: image.height // 2] = 4.0  # confident about the top half
+        return logits
+
+
+def test_api_survives_a_failing_baseline(monkeypatch):
+    """A third party's outage must not delete a trained result that exists."""
+    monkeypatch.setattr(gradio_app, "BASELINE", _BrokenBaseline())
+    monkeypatch.setattr(gradio_app, "TRAINED", _FakeTrained())
+
+    payload = gradio_app.api_predict(Image.new("RGB", (48, 32), (40, 60, 40)), "anything")
+
+    assert payload["baseline"] is None
+    assert "GrounderError" in payload["baseline_error"]
+    assert payload["trained"]["area_pct"] > 0  # the half the fake is sure about
+    assert payload["agreement_iou"] is None  # nothing to agree with
+
+
+def test_comparison_survives_a_failing_baseline(monkeypatch):
+    monkeypatch.setattr(gradio_app, "BASELINE", _BrokenBaseline())
+    monkeypatch.setattr(gradio_app, "TRAINED", _FakeTrained())
+
+    trained, baseline, _gt, summary, trace = gradio_app.run_comparison(
+        Image.new("RGB", (48, 32), (40, 60, 40)), "anything"
+    )
+    assert trained is not None
+    assert baseline is None
+    assert "unavailable" in summary
+    assert "GrounderError" in trace["baseline"]["error"]
+
+
+def test_comparison_raises_only_when_both_sides_fail(monkeypatch):
+    import gradio as gr
+
+    monkeypatch.setattr(gradio_app, "BASELINE", _BrokenBaseline())
+    monkeypatch.setattr(gradio_app, "TRAINED", None)
+
+    with pytest.raises(gr.Error, match="Both predictors failed"):
+        gradio_app.run_comparison(Image.new("RGB", (48, 32)), "anything")

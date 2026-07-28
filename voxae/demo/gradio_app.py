@@ -188,7 +188,6 @@ def lookup_ground_truth(image: Image.Image, query: str) -> tuple[np.ndarray | No
     digest = hashlib.md5(image.convert("RGB").tobytes()).hexdigest()
     if digest != entry["image_md5"]:
         return None, None
-    # Stored as PNG so the demo needs no COCO decoder to read it.
     png = base64.b64decode(entry["mask_png_b64"])
     return np.asarray(Image.open(io.BytesIO(png)).convert("1")) > 0, entry
 
@@ -276,6 +275,8 @@ def run_comparison(image: Image.Image | None, query: str, progress=_PROGRESS):
             trace["trained"] = {"error": str(e)}
 
     progress(0.45, desc="Baseline: asking a hosted VLM for a box")
+    baseline_overlay = None
+    result = None
     t0 = time.perf_counter()
     try:
         result = BASELINE.run(image, query)
@@ -288,7 +289,12 @@ def run_comparison(image: Image.Image | None, query: str, progress=_PROGRESS):
         if not BASELINE_LIVE:
             trace["baseline"]["note"] = "MOCK MODE - set VOXAE_VLM_API_KEY for live grounding"
     except Exception as e:
-        raise gr.Error(f"Baseline error: {e}") from e
+        # Keep the trained result when the hosted VLM fails.
+        lines.append(f"**Zero-shot baseline** &middot; unavailable ({type(e).__name__})")
+        trace["baseline"] = {"error": f"{type(e).__name__}: {e}"}
+
+    if trained_overlay is None and result is None:
+        raise gr.Error("Both predictors failed; nothing to compare.")
 
     progress(0.95, desc="Comparing")
 
@@ -300,19 +306,21 @@ def run_comparison(image: Image.Image | None, query: str, progress=_PROGRESS):
         scores = [f"**Scored against ground truth** ({gt_entry['sample_id']}):"]
         if trained_mask is not None:
             scores.append(f"trained IoU **{iou(trained_mask, gt_mask):.2f}**")
-        scores.append(f"zero-shot IoU **{iou(result.mask, gt_mask):.2f}**")
+        if result is not None:
+            scores.append(f"zero-shot IoU **{iou(result.mask, gt_mask):.2f}**")
         lines.append("  &middot;  ".join(scores))
         trace["ground_truth"] = {
             "sample_id": gt_entry["sample_id"],
             "trained_iou": round(iou(trained_mask, gt_mask), 4)
             if trained_mask is not None
             else None,
-            "baseline_iou": round(iou(result.mask, gt_mask), 4),
+            "baseline_iou": round(iou(result.mask, gt_mask), 4) if result is not None else None,
         }
 
-    lines.append(_agreement_line(trained_mask, result.mask))
-    if result.trace.grounding.rationale:
-        lines.append(f"> Baseline reasoning: *{result.trace.grounding.rationale}*")
+    if result is not None:
+        lines.append(_agreement_line(trained_mask, result.mask))
+        if result.trace.grounding.rationale:
+            lines.append(f"> Baseline reasoning: *{result.trace.grounding.rationale}*")
     lines.append(BENCHMARK_NOTE)
 
     return trained_overlay, baseline_overlay, gt_overlay, "\n\n".join(lines), trace
@@ -412,21 +420,31 @@ def api_predict(
             else 0.0,
         }
 
+    # Keep the trained result when the hosted VLM fails.
+    result = None
     t0 = time.perf_counter()
-    result = BASELINE.run(image, query)
-    latency = time.perf_counter() - t0
-    grounding = result.trace.grounding
-    payload["baseline"] = {
-        "model": BASELINE.name if hasattr(BASELINE, "name") else "zero-shot",
-        "mask_png": _mask_data_uri(result.mask),
-        "area_pct": round(float(result.mask.mean()) * 100, 3),
-        "latency_s": round(latency, 3),
-        "bbox_norm": [grounding.bbox.x1, grounding.bbox.y1, grounding.bbox.x2, grounding.bbox.y2],
-        "rationale": grounding.rationale,
-        "live": BASELINE_LIVE,
-    }
+    try:
+        result = BASELINE.run(image, query)
+        latency = time.perf_counter() - t0
+        grounding = result.trace.grounding
+        payload["baseline"] = {
+            "model": BASELINE.name if hasattr(BASELINE, "name") else "zero-shot",
+            "mask_png": _mask_data_uri(result.mask),
+            "area_pct": round(float(result.mask.mean()) * 100, 3),
+            "latency_s": round(latency, 3),
+            "bbox_norm": [
+                grounding.bbox.x1,
+                grounding.bbox.y1,
+                grounding.bbox.x2,
+                grounding.bbox.y2,
+            ],
+            "rationale": grounding.rationale,
+            "live": BASELINE_LIVE,
+        }
+    except Exception as e:
+        payload["baseline_error"] = f"{type(e).__name__}: {e}"
 
-    if trained_mask is not None:
+    if trained_mask is not None and result is not None:
         payload["agreement_iou"] = round(iou(trained_mask, result.mask), 4)
 
     gt_mask, gt_entry = lookup_ground_truth(image, query)
@@ -439,7 +457,7 @@ def api_predict(
             "trained_iou": round(iou(trained_mask, gt_mask), 4)
             if trained_mask is not None
             else None,
-            "baseline_iou": round(iou(result.mask, gt_mask), 4),
+            "baseline_iou": round(iou(result.mask, gt_mask), 4) if result is not None else None,
         }
     return payload
 
@@ -476,45 +494,7 @@ Built in public. Code: [github.com/nhipixel/voxae](https://github.com/nhipixel/v
 """
 
 
-def _theme() -> gr.Theme:
-    """Dark, low-chrome, green accent matching the mask colour."""
-    # Fonts must be Font objects, not bare strings: Gradio compares themes by
-    # reading .name off each entry and a str has none.
-    return gr.themes.Base(
-        primary_hue=gr.themes.colors.emerald,
-        neutral_hue=gr.themes.colors.slate,
-        font=(gr.themes.GoogleFont("Inter"), "system-ui", "sans-serif"),
-        font_mono=(gr.themes.GoogleFont("JetBrains Mono"), "ui-monospace", "monospace"),
-    ).set(
-        body_background_fill="#0a0c10",
-        background_fill_primary="#11141a",
-        background_fill_secondary="#161a21",
-        block_background_fill="#11141a",
-        block_border_width="1px",
-        block_border_color="#232935",
-        block_label_background_fill="#161a21",
-        block_label_text_color="#8b95a7",
-        block_title_text_color="#e4e8ee",
-        body_text_color="#d6dbe4",
-        body_text_color_subdued="#8b95a7",
-        border_color_primary="#232935",
-        button_primary_background_fill="#2ecc71",
-        button_primary_background_fill_hover="#27ae60",
-        button_primary_text_color="#0a0c10",
-        input_background_fill="#0d1015",
-        slider_color="#2ecc71",
-    )
-
-
-CSS = """
-.gradio-container { max-width: 1400px !important; }
-h2 { letter-spacing: -0.02em; font-weight: 650; }
-footer { display: none !important; }
-"""
-
-
 def build_demo() -> gr.Blocks:
-    # Gradio 6 takes theme and css on launch(), not here.
     with gr.Blocks(title="Voxae") as demo:
         gr.Markdown(ABOUT)
         if TRAINED is None:
@@ -587,7 +567,7 @@ def main() -> None:
 
     share = os.environ.get("VOXAE_SHARE", "").lower() in {"1", "true", "yes"}
     # Inference is serial on one accelerator, so queue rather than run concurrently.
-    build_demo().queue(default_concurrency_limit=1).launch(theme=_theme(), css=CSS, share=share)
+    build_demo().queue(default_concurrency_limit=1).launch(theme=gr.themes.Soft(), share=share)
 
 
 if __name__ == "__main__":
