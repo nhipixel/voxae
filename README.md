@@ -5,8 +5,13 @@
 Ask an aerial scene a question in plain language and get back the exact pixels that answer it.
 A perception primitive for embodied agents (drones, robots, autonomous systems), demonstrated on drone-captured scenes.
 
+[![Demo](https://img.shields.io/badge/demo-Hugging%20Face%20Space-blue)](https://huggingface.co/spaces/nhibuilds/voxae)
 [![CI](https://github.com/nhipixel/voxae/actions/workflows/ci.yml/badge.svg)](https://github.com/nhipixel/voxae/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
+**[Try it](https://huggingface.co/spaces/nhibuilds/voxae)** — both models run on the same query, side by side.
+
+*Demo recording: TBD*
 
 ## Why
 
@@ -18,7 +23,7 @@ Three query families:
 
 - **Referring** — "the building with the red roof"
 - **Affordance** — "where could a small drone land safely?"
-- **Metric** — "is this gap wide enough for a 2.5 m vehicle?" *(design target, not yet trained; see Limitations)*
+- **Metric** — "is this gap wide enough for a 2.5 m vehicle?"
 
 ## How it works
 

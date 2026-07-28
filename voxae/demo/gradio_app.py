@@ -27,6 +27,16 @@ from voxae.viz import overlay_mask
 
 GALLERY_DIR = Path(__file__).parent / "assets" / "gallery"
 
+
+def _gpu(duration: int):
+    """ZeroGPU allocates a GPU only to decorated functions; a no-op elsewhere."""
+    try:
+        import spaces
+    except ImportError:
+        return lambda fn: fn
+    return spaces.GPU(duration=duration)
+
+
 # Implicit, reasoning-style queries: the contrast between a compose baseline
 # and a model trained on them is most visible when nothing is named directly.
 EXAMPLE_QUERIES = [
@@ -144,6 +154,7 @@ def _prepare(image: Image.Image | None, query: str) -> Image.Image:
     return image
 
 
+@_gpu(duration=120)
 def run_comparison(image: Image.Image | None, query: str):
     """Run both predictors; returns (trained, baseline, summary, trace)."""
     image = _prepare(image, query)
