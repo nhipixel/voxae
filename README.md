@@ -67,6 +67,10 @@ Trained in **42 minutes on one 24 GB GPU** (L4, bfloat16, LoRA r=16) on a 2B-par
 
 The baseline's output parser accepts both array and object forms of boxes and points, and takes the first object when a model returns several. An earlier strict schema produced a 4 to 5% parse-failure rate that understated it; the figures above use the lenient parser.
 
+![Trained bridge versus zero-shot baseline](assets/comparison.png)
+
+Three affordance queries selected mechanically by [`scripts/make_figure.py`](scripts/make_figure.py): trained IoU at or above 0.5, zero-shot IoU at or below 0.3, ranked by margin. 44 test-split affordance samples meet that criterion; these are the top three. Aggregate figures for all 306 samples are in the table above.
+
 ## Voxae-Reason (the dataset)
 
 **3,062 queries over 614 drone images**, split 2,464 / 292 / 306 by image.
