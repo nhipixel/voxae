@@ -27,7 +27,7 @@ from PIL import Image
 from voxae.config import get_settings
 from voxae.eval.baselines.zero_shot import ZeroShotPipeline
 from voxae.eval.metrics import iou
-from voxae.viz import overlay_heatmap, overlay_mask
+from voxae.viz import overlay_mask
 
 GALLERY_DIR = Path(__file__).parent / "assets" / "gallery"
 
@@ -245,32 +245,13 @@ def _prepare(image: Image.Image | None, query: str) -> Image.Image:
 DEFAULT_THRESHOLD = 0.5
 
 
-def rethreshold(state: dict | None, threshold: float):
-    """Redraw the trained overlay at a new cut-off.
-
-    The forward pass produced a probability field; moving the threshold is a
-    display decision over cached numbers, so this runs without a GPU and
-    without asking the model anything again.
-    """
-    if not state:
-        return None, ""
-    probs, image = state["probs"], state["image"]
-    area = float((probs >= threshold).mean()) * 100
-    coverage = "no region above this threshold" if area < 0.01 else f"{area:.1f}% of the image"
-    return (
-        overlay_heatmap(image, probs, threshold),
-        f"**Trained bridge** &middot; threshold {threshold:.2f} &middot; {coverage}",
-    )
-
-
 @_gpu(duration=120)
 def run_comparison(image: Image.Image | None, query: str, progress=_PROGRESS):
-    """Run both predictors; returns (trained, baseline, summary, trace, state)."""
+    """Run both predictors; returns (trained, baseline, ground truth, summary, trace)."""
     image = _prepare(image, query)
     trace: dict = {"query": query.strip()}
     lines: list[str] = []
     trained_mask = None
-    state: dict | None = None
 
     trained_overlay = None
     if TRAINED is not None:
@@ -282,8 +263,7 @@ def run_comparison(image: Image.Image | None, query: str, progress=_PROGRESS):
             probs = 1.0 / (1.0 + np.exp(-logits))
             trained_mask = probs >= DEFAULT_THRESHOLD
             area = float(trained_mask.mean()) * 100
-            trained_overlay = overlay_heatmap(image, probs, DEFAULT_THRESHOLD)
-            state = {"probs": probs, "image": image}
+            trained_overlay = overlay_mask(image, trained_mask)
             lines.append(_summary_line("Trained bridge", latency, area))
             trace["trained"] = {
                 "model": TRAINED.name,
@@ -337,7 +317,7 @@ def run_comparison(image: Image.Image | None, query: str, progress=_PROGRESS):
         lines.append(f"> Baseline reasoning: *{result.trace.grounding.rationale}*")
     lines.append(BENCHMARK_NOTE)
 
-    return trained_overlay, baseline_overlay, gt_overlay, "\n\n".join(lines), trace, state
+    return trained_overlay, baseline_overlay, gt_overlay, "\n\n".join(lines), trace
 
 
 # Wide enough to composite over a display-sized image, small enough that a
@@ -374,16 +354,38 @@ def _field_data_uri(probs: np.ndarray) -> str:
     return _png_data_uri(_for_transport(grey))
 
 
+def _as_image(value) -> Image.Image | None:
+    """Coerce whatever the API layer hands over into a PIL image.
+
+    A UI event arrives as a PIL object, but an API client sends a file
+    reference: a path, a URL, or Gradio's FileData dict. Accepting all three
+    keeps the endpoint usable from a browser, a script, and the UI alike.
+    """
+    if value is None or isinstance(value, Image.Image):
+        return value
+    if isinstance(value, dict):
+        value = value.get("path") or value.get("url")
+    if not isinstance(value, str):
+        raise gr.Error(f"Unsupported image payload: {type(value).__name__}")
+    if value.startswith(("http://", "https://")):
+        import httpx
+
+        return Image.open(io.BytesIO(httpx.get(value, timeout=30).content))
+    return Image.open(value)
+
+
 @_gpu(duration=120)
-def api_predict(image: Image.Image | None, query: str, threshold: float = DEFAULT_THRESHOLD):
+def api_predict(
+    image: Image.Image | None, query: str, threshold: float = DEFAULT_THRESHOLD
+) -> dict:
     """Both predictors over one query, as JSON, for any frontend.
 
     The Gradio UI is one client of the model, not the only possible one. This
-    returns rendered overlays plus the numbers behind them so a separate
-    frontend can lay them out however it likes, and returns ground truth only
+    returns the probability field and masks plus the numbers behind them, so a
+    frontend composites them however it likes, and returns ground truth only
     where a correct answer genuinely exists.
     """
-    image = _prepare(image, query)
+    image = _prepare(_as_image(image), query)
     payload: dict = {
         "query": query.strip(),
         "image": {"width": image.width, "height": image.height},
@@ -551,17 +553,6 @@ def build_demo() -> gr.Blocks:
                         # Shown only for the dataset examples, where a correct
                         # answer exists to compare against.
                         gt_out = gr.Image(label="Ground truth", visible=False)
-                    threshold_in = gr.Slider(
-                        0.05,
-                        0.95,
-                        value=DEFAULT_THRESHOLD,
-                        step=0.05,
-                        label="Confidence threshold",
-                        info="The bridge outputs a probability per pixel. Drag to see the "
-                        "field behind the mask; no re-inference, the numbers are cached.",
-                        visible=TRAINED is not None,
-                    )
-                    threshold_out = gr.Markdown()
                     summary_out = gr.Markdown()
                     with gr.Accordion("Run details", open=False):
                         trace_out = gr.JSON()
@@ -575,12 +566,9 @@ def build_demo() -> gr.Blocks:
             with gr.Tab("Roadmap", id="roadmap"):
                 gr.Markdown(ROADMAP)
 
-        field_state = gr.State()
-        outputs = [trained_out, baseline_out, gt_out, summary_out, trace_out, field_state]
+        outputs = [trained_out, baseline_out, gt_out, summary_out, trace_out]
         run_btn.click(run_comparison, [image_in, query_in], outputs)
         query_in.submit(run_comparison, [image_in, query_in], outputs)
-        # Re-thresholding reads cached probabilities, so it never touches the GPU.
-        threshold_in.change(rethreshold, [field_state, threshold_in], [trained_out, threshold_out])
 
         def _load_from_gallery(evt: gr.SelectData):
             """Selecting a sample image drops it into the demo tab, ready to run."""

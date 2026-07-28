@@ -41,11 +41,10 @@ def test_run_comparison_returns_overlays_summary_and_trace(monkeypatch):
     monkeypatch.setattr(gradio_app, "BASELINE_LIVE", False)
 
     image = Image.new("RGB", (64, 48), (30, 90, 30))
-    trained, baseline, gt, summary, trace, state = gradio_app.run_comparison(
+    trained, baseline, gt, summary, trace = gradio_app.run_comparison(
         image, "where can a drone land?"
     )
     assert trained is None  # no checkpoint configured
-    assert state is None  # nothing to re-threshold without a trained model
     assert gt.visible is False  # an arbitrary image has no ground truth
     assert baseline.size == image.size
     assert "Zero-shot baseline" in summary
@@ -76,26 +75,6 @@ def test_ground_truth_matches_its_own_frame():
     mask, found = gradio_app.lookup_ground_truth(Image.open(frame), query)
     assert found["sample_id"] == entry["sample_id"]
     assert mask.any()
-
-
-def test_rethreshold_reads_cached_probabilities():
-    """Moving the threshold is a display decision, not another forward pass."""
-    import numpy as np
-
-    probs = np.zeros((8, 8), dtype=np.float32)
-    probs[:4] = 0.9  # top half confident
-    state = {"probs": probs, "image": Image.new("RGB", (8, 8))}
-
-    overlay, line = gradio_app.rethreshold(state, 0.5)
-    assert overlay.size == (8, 8)
-    assert "50.0% of the image" in line
-
-    _, empty = gradio_app.rethreshold(state, 0.95)
-    assert "no region above this threshold" in empty
-
-
-def test_rethreshold_without_a_run_is_inert():
-    assert gradio_app.rethreshold(None, 0.5) == (None, "")
 
 
 def test_run_comparison_rejects_empty_query():
@@ -132,3 +111,23 @@ def test_rate_limit_blocks_after_budget():
         gradio_app._rate_limited(settings.demo_rate_limit_per_min)
     with pytest.raises(gr.Error, match="Rate limit"):
         gradio_app.run_comparison(image, "anything")
+
+
+def test_api_accepts_every_client_image_shape(tmp_path):
+    """A UI event sends PIL; an API client sends a file reference."""
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (16, 12), (20, 40, 60)).save(frame)
+
+    from_pil = gradio_app._as_image(Image.open(frame))
+    from_path = gradio_app._as_image(str(frame))
+    from_filedata = gradio_app._as_image({"path": str(frame), "meta": {"_type": "gradio.FileData"}})
+
+    assert from_pil.size == from_path.size == from_filedata.size == (16, 12)
+    assert gradio_app._as_image(None) is None
+
+
+def test_api_rejects_an_unusable_image_payload():
+    import gradio as gr
+
+    with pytest.raises(gr.Error):
+        gradio_app._as_image(12345)
