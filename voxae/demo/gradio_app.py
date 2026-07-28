@@ -1,7 +1,7 @@
 """Voxae public demo (Gradio).
 
 The demo runs two predictors side by side on the same query:
-- the trained <SEG> bridge (loaded from VOXAE_CHECKPOINT_DIR when present),
+- the trained <SEG> bridge (from VOXAE_CHECKPOINT_REPO or VOXAE_CHECKPOINT_DIR),
 - the zero-shot compose baseline (hosted VLM grounding + SAM 2.1).
 
 Either side degrades independently: without a checkpoint the trained column
@@ -223,7 +223,8 @@ def build_demo() -> gr.Blocks:
         if TRAINED is None:
             gr.Markdown(
                 "**Baseline only**: no trained checkpoint configured "
-                "(set VOXAE_CHECKPOINT_DIR to enable the comparison)."
+                "(set VOXAE_CHECKPOINT_REPO to a Hub model repo, or "
+                "VOXAE_CHECKPOINT_DIR to a local path, to enable the comparison)."
             )
         if not BASELINE_LIVE:
             gr.Markdown("**Mock baseline**: VOXAE_VLM_API_KEY not set; masks are placeholders.")
