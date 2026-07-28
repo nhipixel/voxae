@@ -46,6 +46,17 @@ A **zero-shot compose baseline** ships alongside it: a hosted VLM emits a boundi
 
 Full details: [`docs/architecture.md`](docs/architecture.md).
 
+## Where this fits
+
+**Embodied AI / robotics is the use case today.** A ground or aerial robot asking its own affordance questions at runtime ("where can I land," "what's blocking this path") instead of relying on a class list fixed before deployment is exactly what Voxae-Reason was built and evaluated on.
+
+Looking forward, the same pipeline, generation, materialization, QC, training, evaluation, is reproducible on a different image distribution and query set, which is what retargeting to an adjacent vertical would take:
+
+- **Construction and infrastructure inspection.** Drone survey footage queried for site-specific risks (clearance, access, encroaching vegetation) without retraining a detector per site or per question.
+- **Disaster response and search.** Fast, ad hoc queries over aerial imagery of an unfamiliar scene, where the questions that matter are not known in advance.
+
+The edge is that swapping verticals is a data problem, not an architecture problem. Voxae-Reason itself is drone imagery with referring and affordance queries, not a construction or SAR dataset, and every stage that produced it, generation, materialization, QC, training, evaluation, runs unchanged on a different source dataset and prompt. Retargeting the model to one of the domains above means running the same pipeline again, not redesigning it.
+
 ## Results
 
 Held-out test split, 306 samples, both predictors on identical inputs.
@@ -64,10 +75,6 @@ Held-out test split, 306 samples, both predictors on identical inputs.
 | unparseable responses | **0** | 1 / 306 |
 
 Inference is one teacher-forced forward pass with no autoregressive generation. The baseline pays an API round trip plus a full SAM encode, and can emit output that fails to parse at all, a failure mode an embedding handoff does not have.
-
-Trained in **42 minutes on one 24 GB GPU** (L4, bfloat16, LoRA r=16) on a 2B-parameter backbone. The whole pipeline is reproducible on a single consumer-grade accelerator.
-
-The baseline's output parser accepts both array and object forms of boxes and points, and takes the first object when a model returns several. An earlier strict schema produced a 4 to 5% parse-failure rate that understated it; the figures above use the lenient parser.
 
 ![Trained bridge versus zero-shot baseline](assets/comparison.png)
 
