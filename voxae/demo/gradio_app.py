@@ -39,12 +39,14 @@ def _gpu(duration: int):
 
 # Implicit, reasoning-style queries: the contrast between a compose baseline
 # and a model trained on them is most visible when nothing is named directly.
-EXAMPLE_QUERIES = [
-    "what would block a fire truck reaching the center?",
-    "where could a small drone land safely?",
-    "which surfaces could a heavy vehicle drive on?",
-    "what vegetation is close enough to the buildings to be a risk?",
-    "where is there open space clear of overhead obstacles?",
+# Each is paired with a scene that actually contains what it asks about, since
+# an affordance query over an image with no such affordance tests nothing.
+EXAMPLE_QUERIES: list[tuple[str, str]] = [
+    ("what vegetation is close enough to the buildings to be a risk?", "Facultad"),
+    ("what would block a fire truck reaching the center?", "Recoleta"),
+    ("which surfaces could a heavy vehicle drive on?", "La_Boca"),
+    ("where could a small drone land safely?", "Agronom"),
+    ("where is there open space clear of overhead obstacles?", "farmland"),
 ]
 
 _request_times: deque[float] = deque(maxlen=64)
@@ -130,9 +132,13 @@ def _gallery_paths() -> tuple[str, ...]:
 def _example_pairs() -> list[list[str | None]]:
     """Image and query together, so one click produces a real result."""
     paths = _gallery_paths()
-    if not paths:
-        return [[None, q] for q in EXAMPLE_QUERIES]
-    return [[paths[i % len(paths)], q] for i, q in enumerate(EXAMPLE_QUERIES)]
+    pairs: list[list[str | None]] = []
+    for i, (query, subject) in enumerate(EXAMPLE_QUERIES):
+        match = next((p for p in paths if subject.lower() in Path(p).name.lower()), None)
+        if match is None and paths:  # gallery contents drift; still offer the query
+            match = paths[i % len(paths)]
+        pairs.append([match, query])
+    return pairs
 
 
 def _summary_line(label: str, latency: float, area_pct: float) -> str:

@@ -46,11 +46,20 @@ def _font(size: int):
         return ImageFont.load_default()
 
 
-def _tile(img: Image.Image) -> Image.Image:
+def _tile(img: Image.Image, empty: bool = False) -> Image.Image:
+    """One cell of the grid.
+
+    An empty prediction renders as the untouched image, which reads as a broken
+    figure rather than a wrong answer, so it gets labelled.
+    """
     out = img.convert("RGB").copy()
     out.thumbnail((TILE, TILE), Image.LANCZOS)
     canvas = Image.new("RGB", (TILE, TILE), (17, 20, 26))
     canvas.paste(out, ((TILE - out.width) // 2, (TILE - out.height) // 2))
+    if empty:
+        draw = ImageDraw.Draw(canvas, "RGBA")
+        draw.rectangle((0, TILE - 26, TILE, TILE), fill=(10, 12, 16, 220))
+        draw.text((8, TILE - 20), "no region predicted", fill=(226, 138, 128), font=_font(13))
     return canvas
 
 
@@ -66,6 +75,7 @@ def make(
     n: Annotated[int, typer.Option(help="Rows in the figure")] = 3,
     min_trained_iou: Annotated[float, typer.Option(help="Trained mask must be good")] = 0.5,
     max_baseline_iou: Annotated[float, typer.Option(help="Baseline must clearly miss")] = 0.3,
+    min_area_pct: Annotated[float, typer.Option(help="Target must be visible at tile size")] = 4.0,
     out: Annotated[Path, typer.Option()] = Path("assets/comparison.png"),
 ) -> None:
     """Pick examples by measured margin, then render both predictions."""
@@ -82,31 +92,30 @@ def make(
     trained_rec = _load_records(ann / f"eval_trained_{split}.records.jsonl")
     baseline_rec = _load_records(ann / f"eval_zero-shot_{split}.records.jsonl")
 
+    all_samples = {s.sample_id: s for s in load_samples(ann / "voxae_reason.jsonl", split=split)}
     ranked = sorted(
         (
             (t["iou"] - baseline_rec[sid]["iou"], sid)
             for sid, t in trained_rec.items()
             if sid in baseline_rec
+            and sid in all_samples
             and t["family"] == family
             and t["iou"] >= min_trained_iou
             and baseline_rec[sid]["iou"] <= max_baseline_iou
+            and all_samples[sid].area_pct >= min_area_pct
             and not baseline_rec[sid]["failed"]
         ),
         reverse=True,
     )
     if not ranked:
         raise typer.BadParameter(
-            f"no {family} samples with trained IoU >= {min_trained_iou} "
-            f"and baseline IoU <= {max_baseline_iou}"
+            f"no {family} samples with trained IoU >= {min_trained_iou}, "
+            f"baseline IoU <= {max_baseline_iou}, target area >= {min_area_pct}%"
         )
     chosen = {sid: margin for margin, sid in ranked[:n]}
     console.print(f"selected {len(chosen)} of {len(ranked)} eligible {family} samples")
 
-    samples = {
-        s.sample_id: s
-        for s in load_samples(ann / "voxae_reason.jsonl", split=split)
-        if s.sample_id in chosen
-    }
+    samples = {sid: all_samples[sid] for sid in chosen}
 
     trained = VoxaeSegPipeline.from_checkpoint(
         checkpoint,
@@ -131,8 +140,8 @@ def make(
                 [
                     _tile(image),
                     _tile(overlay_mask(gt_img, gt)),
-                    _tile(overlay_mask(gt_img, t_mask)),
-                    _tile(overlay_mask(gt_img, b_mask)),
+                    _tile(overlay_mask(gt_img, t_mask), empty=not t_mask.any()),
+                    _tile(overlay_mask(gt_img, b_mask), empty=not b_mask.any()),
                 ],
                 trained_rec[sid]["iou"],
                 baseline_rec[sid]["iou"],
