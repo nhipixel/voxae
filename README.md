@@ -11,6 +11,8 @@ A perception primitive for embodied agents (drones, robots, autonomous systems),
 
 **[Try it](https://huggingface.co/spaces/nhibuilds/voxae).** Both models run on the same query, side by side.
 
+![Voxae demo](assets/demo_v1.gif)
+
 ## Why
 
 A perception model answers only the questions someone fixed at annotation time. A class list is decided months before deployment, and every new question costs another labeling round. Outside a warehouse, the questions are not enumerable in advance.
@@ -86,6 +88,7 @@ Provenance, licenses, and known limitations: [`docs/datasheet.md`](docs/datashee
 Stated plainly, because they affect what the numbers mean.
 
 - **No metric family in the current dataset.** All three source datasets ship with EXIF stripped, so ground-sample distance cannot be recovered and no real-world-dimension queries could be generated. Metric grounding remains the design target; it is not in these results.
+- **In-distribution results.** Results and demo examples use drone imagery matching the training distribution, which assumes a downward view at comparable altitude. Performance on other aerial photography is untested.
 - **Resolution ceiling.** Training images are downscaled, so predicted mask boundaries are limited by the training resolution rather than by the model. This applies identically to the baseline.
 - **One backbone, one scale.** Results are for a 2B model with LoRA. Nothing here establishes how it scales.
 
