@@ -9,9 +9,7 @@ A perception primitive for embodied agents (drones, robots, autonomous systems),
 [![CI](https://github.com/nhipixel/voxae/actions/workflows/ci.yml/badge.svg)](https://github.com/nhipixel/voxae/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-**[Try it](https://huggingface.co/spaces/nhibuilds/voxae)** — both models run on the same query, side by side.
-
-*Demo recording: TBD*
+**[Try it](https://huggingface.co/spaces/nhibuilds/voxae).** Both models run on the same query, side by side.
 
 ## Why
 
@@ -21,9 +19,9 @@ Voxae makes the question an input instead of a training decision.
 
 Three query families:
 
-- **Referring** — "the building with the red roof"
-- **Affordance** — "where could a small drone land safely?"
-- **Metric** — "is this gap wide enough for a 2.5 m vehicle?"
+- **Referring**: "the building with the red roof"
+- **Affordance**: "where could a small drone land safely?"
+- **Metric**: "is this gap wide enough for a 2.5 m vehicle?"
 
 ## How it works
 
@@ -48,17 +46,26 @@ Full details: [`docs/architecture.md`](docs/architecture.md).
 
 ## Results
 
-Trained `<SEG>` bridge on the held-out test split. 306 samples, zero failures.
+Held-out test split, 306 samples, both predictors on identical inputs.
 
-| | gIoU | cIoU |
+| | gIoU trained | gIoU zero-shot | cIoU trained | cIoU zero-shot |
+|---|---|---|---|---|
+| all | **0.414** | 0.371 | **0.502** | 0.307 |
+| referring | 0.399 | **0.538** | 0.393 | **0.494** |
+| affordance | **0.421** | 0.290 | **0.511** | 0.290 |
+
+**The split is the result.** A hosted VLM emitting a box is strong at naming an object and weak at reasoning about what a query implies: it wins referring by 26% and loses affordance by 45%. A single box cannot express a disjoint or proximity-constrained region; a projected embedding can.
+
+| | trained | zero-shot |
 |---|---|---|
-| all | **0.414** | **0.502** |
-| referring | 0.399 | 0.393 |
-| affordance | 0.421 | 0.511 |
+| latency / query | **0.25 s** | 20.8 s |
+| unparseable responses | **0** | 1 / 306 |
 
-Inference is one teacher-forced forward pass with no autoregressive generation: **0.25 s per query** on a single GPU.
+Inference is one teacher-forced forward pass with no autoregressive generation. The baseline pays an API round trip plus a full SAM encode, and can emit output that fails to parse at all, a failure mode an embedding handoff does not have.
 
 Trained in **42 minutes on one 24 GB GPU** (L4, bfloat16, LoRA r=16) on a 2B-parameter backbone. The whole pipeline is reproducible on a single consumer-grade accelerator.
+
+The baseline's output parser accepts both array and object forms of boxes and points, and takes the first object when a model returns several. An earlier strict schema produced a 4 to 5% parse-failure rate that understated it; the figures above use the lenient parser.
 
 ## Voxae-Reason (the dataset)
 
@@ -89,7 +96,9 @@ uv sync --extra ml --extra demo     # full local demo
 uv run python app.py                # Gradio UI
 ```
 
-Set `VOXAE_CHECKPOINT_DIR` to a trained checkpoint to enable the comparison view; without it the demo runs the baseline alone.
+Set `VOXAE_CHECKPOINT_REPO` to a Hub model repo (or `VOXAE_CHECKPOINT_DIR` to a local path) to enable the comparison view; without it the demo runs the baseline alone.
+
+Trained weights: [`nhibuilds/voxae-checkpoint`](https://huggingface.co/nhibuilds/voxae-checkpoint).
 
 Training and evaluation run from YAML configs:
 
@@ -107,7 +116,7 @@ What Voxae contributes:
 
 1. **Symbolic target specification.** Separating language generation from geometry means every label traces back to a ground-truth annotation. Most LLM-generated segmentation data cannot make that claim.
 2. **A single-GPU-budget reproducible pipeline.** Dataset generation, training, evaluation, and demo, end to end, on hardware a student can afford.
-3. **Metric grounding as the next layer** — querying a reconstructed 3D scene so answers return in meters rather than pixels.
+3. **Metric grounding as the next layer.** Querying a reconstructed 3D scene so answers return in meters rather than pixels.
 
 ## License
 
