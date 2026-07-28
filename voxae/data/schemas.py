@@ -20,7 +20,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 NORM_MAX = 1000
 
@@ -38,6 +38,19 @@ class BBoxNorm(BaseModel):
     y1: int = Field(ge=0, le=NORM_MAX)
     x2: int = Field(ge=0, le=NORM_MAX)
     y2: int = Field(ge=0, le=NORM_MAX)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_array_form(cls, data):
+        """Also accept [x1, y1, x2, y2].
+
+        Hosted models emit the array form whatever schema the prompt requests.
+        Rejecting it would measure our prompt rather than the model's grounding
+        ability, and understate any baseline built on one.
+        """
+        if isinstance(data, list | tuple) and len(data) == 4:
+            return dict(zip(("x1", "y1", "x2", "y2"), data, strict=True))
+        return data
 
     @field_validator("x2")
     @classmethod
@@ -61,6 +74,14 @@ class BBoxNorm(BaseModel):
 class PointNorm(BaseModel):
     """A point in normalized 0-1000 space."""
 
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_array_form(cls, data):
+        """Also accept [x, y], for the same reason BBoxNorm does."""
+        if isinstance(data, list | tuple) and len(data) == 2:
+            return {"x": data[0], "y": data[1]}
+        return data
+
     x: int = Field(ge=0, le=NORM_MAX)
     y: int = Field(ge=0, le=NORM_MAX)
 
@@ -79,7 +100,7 @@ class GroundingResult(BaseModel):
     def json_schema_prompt(cls) -> str:
         """Compact schema description embedded in the VLM prompt."""
         return (
-            '{"bbox": {"x1": int, "y1": int, "x2": int, "y2": int}, '
+            '{"bbox": [x1, y1, x2, y2], '
             '"points": [{"x": int, "y": int}, ...], '
             '"rationale": "one short sentence"}'
         )
