@@ -11,7 +11,9 @@ the Space stays clickable in every configuration.
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import json
 import time
 from collections import deque
@@ -24,6 +26,7 @@ from PIL import Image
 
 from voxae.config import get_settings
 from voxae.eval.baselines.zero_shot import ZeroShotPipeline
+from voxae.eval.metrics import iou
 from voxae.viz import overlay_heatmap, overlay_mask
 
 GALLERY_DIR = Path(__file__).parent / "assets" / "gallery"
@@ -166,6 +169,40 @@ def _example_pairs() -> list[list[str | None]]:
     return pairs
 
 
+@lru_cache(maxsize=1)
+def _ground_truth() -> dict[str, dict]:
+    """Frozen masks for the dataset-backed examples, keyed by query text."""
+    path = GALLERY_DIR.parent / "ground_truth.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def lookup_ground_truth(image: Image.Image, query: str) -> tuple[np.ndarray | None, dict | None]:
+    """Ground truth for this exact (frame, query), or nothing.
+
+    Matching on query text alone would score a dataset question typed over an
+    unrelated photo, so the frame's pixels have to match too.
+    """
+    entry = _ground_truth().get(query.strip())
+    if entry is None:
+        return None, None
+    digest = hashlib.md5(image.convert("RGB").tobytes()).hexdigest()
+    if digest != entry["image_md5"]:
+        return None, None
+    from voxae.data import rle
+
+    from voxae.data.schemas import MaskRLE  # isort: skip
+
+    return rle.decode(MaskRLE(**entry["rle"])), entry
+
+
+def _to_image_size(mask: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    """Resample a stored mask onto a possibly downscaled display image."""
+    if mask.shape == (size[1], size[0]):
+        return mask
+    resized = Image.fromarray(mask.astype(np.uint8) * 255).resize(size, Image.NEAREST)
+    return np.asarray(resized) > 127
+
+
 def _summary_line(label: str, latency: float, area_pct: float) -> str:
     """One human-readable line per predictor; empty masks say so explicitly."""
     if area_pct < 0.01:
@@ -188,8 +225,6 @@ def _agreement_line(trained_mask, baseline_mask) -> str:
     """
     if trained_mask is None:
         return ""
-    from voxae.eval.metrics import iou
-
     return f"**Agreement between the two masks**: IoU {iou(trained_mask, baseline_mask):.2f}"
 
 
@@ -278,12 +313,135 @@ def run_comparison(image: Image.Image | None, query: str, progress=_PROGRESS):
         raise gr.Error(f"Baseline error: {e}") from e
 
     progress(0.95, desc="Comparing")
+
+    gt_mask, gt_entry = lookup_ground_truth(image, query)
+    gt_overlay = gr.Image(visible=False)
+    if gt_mask is not None:
+        gt_mask = _to_image_size(gt_mask, image.size)
+        gt_overlay = gr.Image(value=overlay_mask(image, gt_mask), visible=True)
+        scores = [f"**Scored against ground truth** ({gt_entry['sample_id']}):"]
+        if trained_mask is not None:
+            scores.append(f"trained IoU **{iou(trained_mask, gt_mask):.2f}**")
+        scores.append(f"zero-shot IoU **{iou(result.mask, gt_mask):.2f}**")
+        lines.append("  &middot;  ".join(scores))
+        trace["ground_truth"] = {
+            "sample_id": gt_entry["sample_id"],
+            "trained_iou": round(iou(trained_mask, gt_mask), 4)
+            if trained_mask is not None
+            else None,
+            "baseline_iou": round(iou(result.mask, gt_mask), 4),
+        }
+
     lines.append(_agreement_line(trained_mask, result.mask))
     if result.trace.grounding.rationale:
         lines.append(f"> Baseline reasoning: *{result.trace.grounding.rationale}*")
     lines.append(BENCHMARK_NOTE)
 
-    return trained_overlay, baseline_overlay, "\n\n".join(lines), trace, state
+    return trained_overlay, baseline_overlay, gt_overlay, "\n\n".join(lines), trace, state
+
+
+# Wide enough to composite over a display-sized image, small enough that a
+# response stays in the hundreds of kilobytes rather than the megabytes a
+# rendered overlay costs.
+TRANSPORT_MAX_PX = 1024
+
+
+def _png_data_uri(image: Image.Image) -> str:
+    buf = io.BytesIO()
+    image.save(buf, format="PNG", optimize=True)
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def _for_transport(image: Image.Image) -> Image.Image:
+    out = image.copy()
+    out.thumbnail((TRANSPORT_MAX_PX, TRANSPORT_MAX_PX), Image.NEAREST)
+    return out
+
+
+def _mask_data_uri(mask: np.ndarray) -> str:
+    """Binary mask as a 1-bit PNG: a few kilobytes, composited client-side."""
+    return _png_data_uri(_for_transport(Image.fromarray(mask).convert("1")))
+
+
+def _field_data_uri(probs: np.ndarray) -> str:
+    """Probability field as 8-bit grey, so a client can threshold it itself.
+
+    Sending the field rather than a rendered overlay lets a frontend move the
+    threshold with no round trip, the same way the Gradio slider does against
+    its cached copy.
+    """
+    grey = Image.fromarray((np.clip(probs, 0.0, 1.0) * 255).astype(np.uint8), mode="L")
+    return _png_data_uri(_for_transport(grey))
+
+
+@_gpu(duration=120)
+def api_predict(image: Image.Image | None, query: str, threshold: float = DEFAULT_THRESHOLD):
+    """Both predictors over one query, as JSON, for any frontend.
+
+    The Gradio UI is one client of the model, not the only possible one. This
+    returns rendered overlays plus the numbers behind them so a separate
+    frontend can lay them out however it likes, and returns ground truth only
+    where a correct answer genuinely exists.
+    """
+    image = _prepare(image, query)
+    payload: dict = {
+        "query": query.strip(),
+        "image": {"width": image.width, "height": image.height},
+        "trained": None,
+        "baseline": None,
+        "ground_truth": None,
+        "agreement_iou": None,
+    }
+
+    trained_mask = None
+    if TRAINED is not None:
+        t0 = time.perf_counter()
+        logits = TRAINED.predict_logits(image, query)
+        latency = time.perf_counter() - t0
+        probs = 1.0 / (1.0 + np.exp(-logits))
+        trained_mask = probs >= threshold
+        payload["trained"] = {
+            "model": TRAINED.name,
+            "probs_png": _field_data_uri(probs),
+            "mask_png": _mask_data_uri(trained_mask),
+            "area_pct": round(float(trained_mask.mean()) * 100, 3),
+            "latency_s": round(latency, 3),
+            "threshold": threshold,
+            "mean_confidence_in_mask": round(float(probs[trained_mask].mean()), 3)
+            if trained_mask.any()
+            else 0.0,
+        }
+
+    t0 = time.perf_counter()
+    result = BASELINE.run(image, query)
+    latency = time.perf_counter() - t0
+    grounding = result.trace.grounding
+    payload["baseline"] = {
+        "model": BASELINE.name if hasattr(BASELINE, "name") else "zero-shot",
+        "mask_png": _mask_data_uri(result.mask),
+        "area_pct": round(float(result.mask.mean()) * 100, 3),
+        "latency_s": round(latency, 3),
+        "bbox_norm": [grounding.bbox.x1, grounding.bbox.y1, grounding.bbox.x2, grounding.bbox.y2],
+        "rationale": grounding.rationale,
+        "live": BASELINE_LIVE,
+    }
+
+    if trained_mask is not None:
+        payload["agreement_iou"] = round(iou(trained_mask, result.mask), 4)
+
+    gt_mask, gt_entry = lookup_ground_truth(image, query)
+    if gt_mask is not None:
+        gt_mask = _to_image_size(gt_mask, image.size)
+        payload["ground_truth"] = {
+            "sample_id": gt_entry["sample_id"],
+            "family": gt_entry["family"],
+            "mask_png": _mask_data_uri(gt_mask),
+            "trained_iou": round(iou(trained_mask, gt_mask), 4)
+            if trained_mask is not None
+            else None,
+            "baseline_iou": round(iou(result.mask, gt_mask), 4),
+        }
+    return payload
 
 
 BASELINE, BASELINE_LIVE = build_baseline()
@@ -387,6 +545,9 @@ def build_demo() -> gr.Blocks:
                             label="Trained <SEG> bridge", visible=TRAINED is not None
                         )
                         baseline_out = gr.Image(label="Zero-shot baseline")
+                        # Shown only for the dataset examples, where a correct
+                        # answer exists to compare against.
+                        gt_out = gr.Image(label="Ground truth", visible=False)
                     threshold_in = gr.Slider(
                         0.05,
                         0.95,
@@ -412,7 +573,7 @@ def build_demo() -> gr.Blocks:
                 gr.Markdown(ROADMAP)
 
         field_state = gr.State()
-        outputs = [trained_out, baseline_out, summary_out, trace_out, field_state]
+        outputs = [trained_out, baseline_out, gt_out, summary_out, trace_out, field_state]
         run_btn.click(run_comparison, [image_in, query_in], outputs)
         query_in.submit(run_comparison, [image_in, query_in], outputs)
         # Re-thresholding reads cached probabilities, so it never touches the GPU.
@@ -425,6 +586,9 @@ def build_demo() -> gr.Blocks:
             return chosen, gr.Tabs(selected="demo")
 
         gallery.select(_load_from_gallery, None, [image_in, tabs])
+
+        # API-only: a separate frontend calls this instead of driving the UI.
+        gr.api(api_predict, api_name="predict")
     return demo
 
 

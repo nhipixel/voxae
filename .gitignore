@@ -56,3 +56,8 @@ Thumbs.db
 
 # Notebook checkpoints
 .ipynb_checkpoints/
+
+# Working notes: kept locally, not part of the published project
+docs/build-log.md
+docs/commits.md
+docs/novelty.md

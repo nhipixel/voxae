@@ -41,15 +41,41 @@ def test_run_comparison_returns_overlays_summary_and_trace(monkeypatch):
     monkeypatch.setattr(gradio_app, "BASELINE_LIVE", False)
 
     image = Image.new("RGB", (64, 48), (30, 90, 30))
-    trained, baseline, summary, trace, state = gradio_app.run_comparison(
+    trained, baseline, gt, summary, trace, state = gradio_app.run_comparison(
         image, "where can a drone land?"
     )
     assert trained is None  # no checkpoint configured
     assert state is None  # nothing to re-threshold without a trained model
+    assert gt.visible is False  # an arbitrary image has no ground truth
     assert baseline.size == image.size
     assert "Zero-shot baseline" in summary
     assert trace["query"] == "where can a drone land?"
     assert "MOCK MODE" in trace["baseline"]["note"]
+
+
+def test_ground_truth_requires_the_frame_it_was_drawn_on():
+    """A dataset query typed over another image must not be scored."""
+    known = next(iter(gradio_app._ground_truth()), None)
+    if known is None:
+        pytest.skip("no exported ground truth in this checkout")
+    mask, entry = gradio_app.lookup_ground_truth(Image.new("RGB", (64, 48)), known)
+    assert mask is None and entry is None
+
+
+def test_ground_truth_matches_its_own_frame():
+    from pathlib import Path
+
+    entries = gradio_app._ground_truth()
+    if not entries:
+        pytest.skip("no exported ground truth in this checkout")
+    query, entry = next(iter(entries.items()))
+    # Shipped under a prefixed name, as the exporter resolves it.
+    frame = next(Path(gradio_app.GALLERY_DIR).glob(f"*{entry['image_stem']}.*"), None)
+    if frame is None:
+        pytest.skip("dataset frame not present in this checkout")
+    mask, found = gradio_app.lookup_ground_truth(Image.open(frame), query)
+    assert found["sample_id"] == entry["sample_id"]
+    assert mask.any()
 
 
 def test_rethreshold_reads_cached_probabilities():

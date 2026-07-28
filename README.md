@@ -50,12 +50,10 @@ Full details: [`docs/architecture.md`](docs/architecture.md).
 
 **Embodied AI / robotics is the use case today.** A ground or aerial robot asking its own affordance questions at runtime ("where can I land," "what's blocking this path") instead of relying on a class list fixed before deployment is exactly what Voxae-Reason was built and evaluated on.
 
-Looking forward, the same pipeline, generation, materialization, QC, training, evaluation, is reproducible on a different image distribution and query set, which is what retargeting to an adjacent vertical would take:
+Looking forward, swapping verticals is a data problem, not an architecture problem: the same generate, train, evaluate pipeline reruns unchanged on a different source dataset and query set. Two adjacent examples:
 
 - **Construction and infrastructure inspection.** Drone survey footage queried for site-specific risks (clearance, access, encroaching vegetation) without retraining a detector per site or per question.
 - **Disaster response and search.** Fast, ad hoc queries over aerial imagery of an unfamiliar scene, where the questions that matter are not known in advance.
-
-The edge is that swapping verticals is a data problem, not an architecture problem. Voxae-Reason itself is drone imagery with referring and affordance queries, not a construction or SAR dataset, and every stage that produced it, generation, materialization, QC, training, evaluation, runs unchanged on a different source dataset and prompt. Retargeting the model to one of the domains above means running the same pipeline again, not redesigning it.
 
 ## Results
 

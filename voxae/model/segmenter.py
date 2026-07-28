@@ -6,6 +6,8 @@ that importing this module never pulls torch (CI stays CPU-light with mocks).
 
 from __future__ import annotations
 
+import hashlib
+from collections import OrderedDict
 from typing import Any, Protocol
 
 import numpy as np
@@ -30,13 +32,20 @@ class Segmenter(Protocol):
 
 
 class Sam2Segmenter:
-    """SAM 2.1 image segmentation through transformers (CPU-friendly at demo scale)."""
+    """SAM 2.1 image segmentation through transformers (CPU-friendly at demo scale).
 
-    def __init__(self, settings: Settings | None = None):
+    The vision encoder dominates the cost and depends only on the image, so
+    its output is cached: asking several questions about one photo, which is
+    what the demo invites, pays for the encoder once.
+    """
+
+    def __init__(self, settings: Settings | None = None, cache_size: int = 4):
         self.settings = settings or get_settings()
         self.name = f"sam2:{self.settings.sam2_model}"
         self._model: Any = None
         self._processor: Any = None
+        self._cache_size = cache_size
+        self._embeddings: OrderedDict[str, list] = OrderedDict()
 
     def _load(self) -> None:
         if self._model is not None:
@@ -51,6 +60,37 @@ class Sam2Segmenter:
         self._processor = Sam2Processor.from_pretrained(self.settings.sam2_model)
         self._model = Sam2Model.from_pretrained(self.settings.sam2_model)
         self._model.to(self.settings.device).eval()
+
+    @staticmethod
+    def _cache_key(image: Image.Image) -> str:
+        return hashlib.md5(image.tobytes()).hexdigest()  # identity, not security
+
+    def _image_embeddings(self, image: Image.Image, pixel_values) -> list:
+        """Encoder output for this image, computed once and reused.
+
+        Mirrors what Sam2Model.forward does internally before prompting, so the
+        cached value is exactly what it would have produced.
+        """
+        key = self._cache_key(image)
+        if key in self._embeddings:
+            self._embeddings.move_to_end(key)
+            return self._embeddings[key]
+
+        import torch
+
+        with torch.inference_mode():
+            features = self._model.get_image_features(pixel_values, return_dict=True)
+        maps = list(features.fpn_hidden_states)
+        maps[-1] = maps[-1] + self._model.no_memory_embedding
+        embeddings = [
+            feat.permute(1, 2, 0).view(pixel_values.shape[0], -1, *size)
+            for feat, size in zip(maps, self._model.backbone_feature_sizes, strict=True)
+        ]
+
+        self._embeddings[key] = embeddings
+        if len(self._embeddings) > self._cache_size:
+            self._embeddings.popitem(last=False)
+        return embeddings
 
     def segment(
         self,
@@ -72,8 +112,17 @@ class Sam2Segmenter:
             input_boxes=input_boxes,
             return_tensors="pt",
         ).to(self.settings.device)
+
+        # forward() accepts embeddings in place of pixels, and rejects both.
+        embeddings = self._image_embeddings(img, inputs["pixel_values"])
         with torch.inference_mode():
-            outputs = self._model(**inputs, multimask_output=False)
+            outputs = self._model(
+                image_embeddings=embeddings,
+                input_points=inputs["input_points"],
+                input_labels=inputs["input_labels"],
+                input_boxes=inputs["input_boxes"],
+                multimask_output=False,
+            )
         masks = self._processor.post_process_masks(
             outputs.pred_masks.cpu(), inputs["original_sizes"]
         )[0]
