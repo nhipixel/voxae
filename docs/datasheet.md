@@ -95,8 +95,16 @@ The three rejects are informative and reproducible:
 
 ## Distribution
 
-Annotations only. Source images are not redistributed; each sample stores a
-relative path into the original dataset, and the preparation scripts in this
-repository rebuild the local layout. Derived annotations inherit the
+Annotations only. The dataset redistributes no source imagery; each sample
+stores a relative path into the original dataset, and the preparation scripts
+in this repository rebuild the local layout. Derived annotations inherit the
 non-commercial terms of the source datasets and are released under
 CC BY-NC-SA 4.0.
+
+One exception, outside the dataset itself: a small number of **UAVid** frames
+ship in the demo gallery, so the public demo runs on imagery matching the
+training distribution rather than on out-of-distribution stock photography.
+UAVid is CC BY-NC-SA 4.0, which permits non-commercial redistribution with
+attribution under the same licence; the frames are unmodified and credited in
+`voxae/demo/assets/ATTRIBUTION.md`. The Semantic Drone Dataset and VDD forbid
+redistribution and appear only as measured results in figures, never as files.
