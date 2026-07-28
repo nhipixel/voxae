@@ -19,11 +19,12 @@ from functools import lru_cache
 from pathlib import Path
 
 import gradio as gr
+import numpy as np
 from PIL import Image
 
 from voxae.config import get_settings
 from voxae.eval.baselines.zero_shot import ZeroShotPipeline
-from voxae.viz import overlay_mask
+from voxae.viz import overlay_heatmap, overlay_mask
 
 GALLERY_DIR = Path(__file__).parent / "assets" / "gallery"
 
@@ -40,12 +41,8 @@ def _gpu(duration: int):
 # Held-out dataset frames first, chosen by measured IoU. Three share one frame:
 # identical pixels answering different questions is the clearest demonstration
 # of a query-conditioned model. Stock aerial photography follows, outside the
-# training distribution, so the limitation is something a visitor can see
+# training distribution, so the limitation is something a visitor can try
 # rather than only read.
-# The first DATASET_EXAMPLES entries are held-out evaluation frames, each a
-# query the model measurably handles. The rest are stock aerial photography,
-# kept so the in-distribution caveat is something a visitor can try rather than
-# only read.
 DATASET_EXAMPLES = 5
 EXAMPLE_QUERIES: list[tuple[str, str]] = [
     (
@@ -210,28 +207,56 @@ def _prepare(image: Image.Image | None, query: str) -> Image.Image:
     return image
 
 
+DEFAULT_THRESHOLD = 0.5
+
+
+def rethreshold(state: dict | None, threshold: float):
+    """Redraw the trained overlay at a new cut-off.
+
+    The forward pass produced a probability field; moving the threshold is a
+    display decision over cached numbers, so this runs without a GPU and
+    without asking the model anything again.
+    """
+    if not state:
+        return None, ""
+    probs, image = state["probs"], state["image"]
+    area = float((probs >= threshold).mean()) * 100
+    coverage = "no region above this threshold" if area < 0.01 else f"{area:.1f}% of the image"
+    return (
+        overlay_heatmap(image, probs, threshold),
+        f"**Trained bridge** &middot; threshold {threshold:.2f} &middot; {coverage}",
+    )
+
+
 @_gpu(duration=120)
 def run_comparison(image: Image.Image | None, query: str, progress=_PROGRESS):
-    """Run both predictors; returns (trained, baseline, summary, trace)."""
+    """Run both predictors; returns (trained, baseline, summary, trace, state)."""
     image = _prepare(image, query)
     trace: dict = {"query": query.strip()}
     lines: list[str] = []
     trained_mask = None
+    state: dict | None = None
 
     trained_overlay = None
     if TRAINED is not None:
         progress(0.1, desc="Trained bridge: one forward pass")
         t0 = time.perf_counter()
         try:
-            trained_mask = TRAINED.predict(image, query)
+            logits = TRAINED.predict_logits(image, query)
             latency = time.perf_counter() - t0
+            probs = 1.0 / (1.0 + np.exp(-logits))
+            trained_mask = probs >= DEFAULT_THRESHOLD
             area = float(trained_mask.mean()) * 100
-            trained_overlay = overlay_mask(image, trained_mask)
+            trained_overlay = overlay_heatmap(image, probs, DEFAULT_THRESHOLD)
+            state = {"probs": probs, "image": image}
             lines.append(_summary_line("Trained bridge", latency, area))
             trace["trained"] = {
                 "model": TRAINED.name,
                 "latency_s": round(latency, 2),
                 "mask_area_pct": round(area, 2),
+                "mean_confidence_in_mask": round(float(probs[trained_mask].mean()), 3)
+                if trained_mask.any()
+                else 0.0,
             }
         except Exception as e:
             lines.append(f"**Trained bridge** &middot; failed: {e}")
@@ -258,7 +283,7 @@ def run_comparison(image: Image.Image | None, query: str, progress=_PROGRESS):
         lines.append(f"> Baseline reasoning: *{result.trace.grounding.rationale}*")
     lines.append(BENCHMARK_NOTE)
 
-    return trained_overlay, baseline_overlay, "\n\n".join(lines), trace
+    return trained_overlay, baseline_overlay, "\n\n".join(lines), trace, state
 
 
 BASELINE, BASELINE_LIVE = build_baseline()
@@ -293,8 +318,43 @@ Built in public. Code: [github.com/nhipixel/voxae](https://github.com/nhipixel/v
 """
 
 
+def _theme() -> gr.Theme:
+    """Dark, low-chrome, green accent matching the mask colour."""
+    return gr.themes.Base(
+        primary_hue=gr.themes.colors.emerald,
+        neutral_hue=gr.themes.colors.slate,
+        font=("Inter", "ui-sans-serif", "system-ui", "sans-serif"),
+        font_mono=("JetBrains Mono", "ui-monospace", "monospace"),
+    ).set(
+        body_background_fill="#0a0c10",
+        background_fill_primary="#11141a",
+        background_fill_secondary="#161a21",
+        block_background_fill="#11141a",
+        block_border_width="1px",
+        block_border_color="#232935",
+        block_label_background_fill="#161a21",
+        block_label_text_color="#8b95a7",
+        block_title_text_color="#e4e8ee",
+        body_text_color="#d6dbe4",
+        body_text_color_subdued="#8b95a7",
+        border_color_primary="#232935",
+        button_primary_background_fill="#2ecc71",
+        button_primary_background_fill_hover="#27ae60",
+        button_primary_text_color="#0a0c10",
+        input_background_fill="#0d1015",
+        slider_color="#2ecc71",
+    )
+
+
+CSS = """
+.gradio-container { max-width: 1400px !important; }
+h2 { letter-spacing: -0.02em; font-weight: 650; }
+footer { display: none !important; }
+"""
+
+
 def build_demo() -> gr.Blocks:
-    with gr.Blocks(title="Voxae") as demo:
+    with gr.Blocks(title="Voxae", theme=_theme(), css=CSS) as demo:
         gr.Markdown(ABOUT)
         if TRAINED is None:
             gr.Markdown(
@@ -327,6 +387,17 @@ def build_demo() -> gr.Blocks:
                             label="Trained <SEG> bridge", visible=TRAINED is not None
                         )
                         baseline_out = gr.Image(label="Zero-shot baseline")
+                    threshold_in = gr.Slider(
+                        0.05,
+                        0.95,
+                        value=DEFAULT_THRESHOLD,
+                        step=0.05,
+                        label="Confidence threshold",
+                        info="The bridge outputs a probability per pixel. Drag to see the "
+                        "field behind the mask; no re-inference, the numbers are cached.",
+                        visible=TRAINED is not None,
+                    )
+                    threshold_out = gr.Markdown()
                     summary_out = gr.Markdown()
                     with gr.Accordion("Run details", open=False):
                         trace_out = gr.JSON()
@@ -340,9 +411,12 @@ def build_demo() -> gr.Blocks:
             with gr.Tab("Roadmap", id="roadmap"):
                 gr.Markdown(ROADMAP)
 
-        outputs = [trained_out, baseline_out, summary_out, trace_out]
+        field_state = gr.State()
+        outputs = [trained_out, baseline_out, summary_out, trace_out, field_state]
         run_btn.click(run_comparison, [image_in, query_in], outputs)
         query_in.submit(run_comparison, [image_in, query_in], outputs)
+        # Re-thresholding reads cached probabilities, so it never touches the GPU.
+        threshold_in.change(rethreshold, [field_state, threshold_in], [trained_out, threshold_out])
 
         def _load_from_gallery(evt: gr.SelectData):
             """Selecting a sample image drops it into the demo tab, ready to run."""
@@ -360,7 +434,7 @@ def main() -> None:
 
     share = os.environ.get("VOXAE_SHARE", "").lower() in {"1", "true", "yes"}
     # Inference is serial on one accelerator, so queue rather than run concurrently.
-    build_demo().queue(default_concurrency_limit=1).launch(theme=gr.themes.Soft(), share=share)
+    build_demo().queue(default_concurrency_limit=1).launch(share=share)
 
 
 if __name__ == "__main__":

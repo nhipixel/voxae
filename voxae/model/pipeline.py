@@ -81,9 +81,18 @@ class VoxaeSegPipeline:
             current[name].data.copy_(tensor)
         return cls(model, processor, device=device)
 
-    @torch.inference_mode()
     def predict(self, image: Image.Image, query: str) -> np.ndarray:
         """(image, query) -> full-resolution boolean mask."""
+        return self.predict_logits(image, query) > 0
+
+    @torch.inference_mode()
+    def predict_logits(self, image: Image.Image, query: str) -> np.ndarray:
+        """(image, query) -> full-resolution mask logits.
+
+        The decision threshold is a display choice, not a model property, so
+        callers that want to move it keep the field rather than re-running a
+        forward pass per threshold.
+        """
         from voxae.train.collate import ASSISTANT_TEMPLATE, vlm_image
 
         messages = [
@@ -112,7 +121,7 @@ class VoxaeSegPipeline:
         full = torch.nn.functional.interpolate(
             low_res, size=(image.height, image.width), mode="bilinear", align_corners=False
         )[0, 0]
-        return (full > 0).cpu().numpy()
+        return full.cpu().numpy()
 
     @staticmethod
     def _sam_pixels(image: Image.Image, size: int) -> torch.Tensor:

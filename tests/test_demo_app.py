@@ -41,12 +41,35 @@ def test_run_comparison_returns_overlays_summary_and_trace(monkeypatch):
     monkeypatch.setattr(gradio_app, "BASELINE_LIVE", False)
 
     image = Image.new("RGB", (64, 48), (30, 90, 30))
-    trained, baseline, summary, trace = gradio_app.run_comparison(image, "where can a drone land?")
+    trained, baseline, summary, trace, state = gradio_app.run_comparison(
+        image, "where can a drone land?"
+    )
     assert trained is None  # no checkpoint configured
+    assert state is None  # nothing to re-threshold without a trained model
     assert baseline.size == image.size
     assert "Zero-shot baseline" in summary
     assert trace["query"] == "where can a drone land?"
     assert "MOCK MODE" in trace["baseline"]["note"]
+
+
+def test_rethreshold_reads_cached_probabilities():
+    """Moving the threshold is a display decision, not another forward pass."""
+    import numpy as np
+
+    probs = np.zeros((8, 8), dtype=np.float32)
+    probs[:4] = 0.9  # top half confident
+    state = {"probs": probs, "image": Image.new("RGB", (8, 8))}
+
+    overlay, line = gradio_app.rethreshold(state, 0.5)
+    assert overlay.size == (8, 8)
+    assert "50.0% of the image" in line
+
+    _, empty = gradio_app.rethreshold(state, 0.95)
+    assert "no region above this threshold" in empty
+
+
+def test_rethreshold_without_a_run_is_inert():
+    assert gradio_app.rethreshold(None, 0.5) == (None, "")
 
 
 def test_run_comparison_rejects_empty_query():
