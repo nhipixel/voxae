@@ -23,6 +23,10 @@ class Settings(BaseSettings):
 
     # Trained bridge (demo loads it when a checkpoint directory is set)
     checkpoint_dir: str = ""
+    # Hub model repo holding state.pt. Space repos cap at 1 GB and the trained
+    # embeddings alone exceed that, so the weights live in a model repo and the
+    # Space fetches them at startup. Takes precedence over checkpoint_dir.
+    checkpoint_repo: str = ""
     trained_backbone_id: str = "Qwen/Qwen2-VL-2B-Instruct"
 
     # Demo behavior

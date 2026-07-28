@@ -70,13 +70,18 @@ def build_baseline() -> tuple[ZeroShotPipeline, bool]:
 def build_trained():
     """Load the trained bridge if a checkpoint is configured, else None."""
     settings = get_settings()
-    if not settings.checkpoint_dir:
+    if not (settings.checkpoint_repo or settings.checkpoint_dir):
         return None
     try:
         from voxae.model.pipeline import VoxaeSegPipeline
 
+        checkpoint_dir = settings.checkpoint_dir
+        if settings.checkpoint_repo:
+            from huggingface_hub import hf_hub_download
+
+            checkpoint_dir = str(Path(hf_hub_download(settings.checkpoint_repo, "state.pt")).parent)
         return VoxaeSegPipeline.from_checkpoint(
-            settings.checkpoint_dir,
+            checkpoint_dir,
             backbone_id=settings.trained_backbone_id,
             sam2_id=settings.sam2_model,
             device=settings.device,

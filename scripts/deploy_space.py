@@ -44,6 +44,7 @@ SPACE_REQUIREMENTS = """--extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.4
 torchvision>=0.19
 transformers>=4.53
+huggingface-hub>=0.34
 gradio>=6.20
 numpy>=1.26
 pillow>=10.3
@@ -126,19 +127,26 @@ def deploy(
             "config": full.get("config", {}),
             "step": full.get("step", 0),
         }
+        # Space repos cap at 1 GB and the trained embeddings alone exceed that,
+        # so weights go to a model repo the Space fetches at startup.
+        model_repo = f"{space_id}-checkpoint"
+        api.create_repo(model_repo, repo_type="model", private=private, exist_ok=True)
         with tempfile.TemporaryDirectory() as td:
             trimmed = Path(td) / "state.pt"
             torch.save(slim, trimmed)
             before = source.stat().st_size / 1e6
             after = trimmed.stat().st_size / 1e6
-            console.print(f"uploading checkpoint ({before:.0f} MB trimmed to {after:.0f} MB)...")
+            console.print(
+                f"uploading checkpoint to {model_repo} "
+                f"({before:.0f} MB trimmed to {after:.0f} MB)..."
+            )
             api.upload_file(
                 path_or_fileobj=str(trimmed),
-                path_in_repo="checkpoint/state.pt",
-                repo_id=space_id,
-                repo_type="space",
+                path_in_repo="state.pt",
+                repo_id=model_repo,
+                repo_type="model",
             )
-        console.print("[green]checkpoint uploaded -> checkpoint/state.pt[/green]")
+        console.print(f"[green]checkpoint uploaded -> {model_repo}[/green]")
 
     console.print(
         f"[bold green]Space deployed:[/bold green] https://huggingface.co/spaces/{space_id}"
@@ -146,7 +154,8 @@ def deploy(
     console.print(
         "\nSpace settings -> Variables and secrets:\n"
         "  VOXAE_VLM_API_KEY   (secret) enables the zero-shot baseline\n"
-        "  VOXAE_CHECKPOINT_DIR=checkpoint   (variable) enables the trained column"
+        f"  VOXAE_CHECKPOINT_REPO={space_id}-checkpoint   (variable) enables the trained column\n"
+        "  VOXAE_DEVICE=cuda   (variable) required on a GPU Space"
     )
 
 
