@@ -48,6 +48,8 @@ EXAMPLE_QUERIES = [
 ]
 
 _request_times: deque[float] = deque(maxlen=64)
+# Gradio injects the real tracker per request; this is only the default binding.
+_PROGRESS = gr.Progress()
 
 
 def _rate_limited(limit_per_min: int) -> bool:
@@ -140,6 +142,26 @@ def _summary_line(label: str, latency: float, area_pct: float) -> str:
     return f"**{label}** &middot; {latency:.1f}s &middot; {area_pct:.1f}% of the image"
 
 
+BENCHMARK_NOTE = (
+    "Held-out test split, 306 samples: **gIoU 0.42 vs 0.29 on affordance queries** "
+    "(trained vs zero-shot), 0.40 vs 0.54 on referring. Uploaded images have no "
+    "ground truth, so nothing here is scored; the numbers above are latency and coverage."
+)
+
+
+def _agreement_line(trained_mask, baseline_mask) -> str:
+    """How far apart the two answers are, for a query with no ground truth.
+
+    Not a quality score. It separates 'both found the same region' from 'these
+    two systems disagree about what the question means'.
+    """
+    if trained_mask is None:
+        return ""
+    from voxae.eval.metrics import iou
+
+    return f"**Agreement between the two masks**: IoU {iou(trained_mask, baseline_mask):.2f}"
+
+
 def _prepare(image: Image.Image | None, query: str) -> Image.Image:
     settings = get_settings()
     if image is None:
@@ -155,20 +177,22 @@ def _prepare(image: Image.Image | None, query: str) -> Image.Image:
 
 
 @_gpu(duration=120)
-def run_comparison(image: Image.Image | None, query: str):
+def run_comparison(image: Image.Image | None, query: str, progress=_PROGRESS):
     """Run both predictors; returns (trained, baseline, summary, trace)."""
     image = _prepare(image, query)
     trace: dict = {"query": query.strip()}
     lines: list[str] = []
+    trained_mask = None
 
     trained_overlay = None
     if TRAINED is not None:
+        progress(0.1, desc="Trained bridge: one forward pass")
         t0 = time.perf_counter()
         try:
-            mask = TRAINED.predict(image, query)
+            trained_mask = TRAINED.predict(image, query)
             latency = time.perf_counter() - t0
-            area = float(mask.mean()) * 100
-            trained_overlay = overlay_mask(image, mask)
+            area = float(trained_mask.mean()) * 100
+            trained_overlay = overlay_mask(image, trained_mask)
             lines.append(_summary_line("Trained bridge", latency, area))
             trace["trained"] = {
                 "model": TRAINED.name,
@@ -179,6 +203,7 @@ def run_comparison(image: Image.Image | None, query: str):
             lines.append(f"**Trained bridge** &middot; failed: {e}")
             trace["trained"] = {"error": str(e)}
 
+    progress(0.45, desc="Baseline: asking a hosted VLM for a box")
     t0 = time.perf_counter()
     try:
         result = BASELINE.run(image, query)
@@ -192,6 +217,12 @@ def run_comparison(image: Image.Image | None, query: str):
             trace["baseline"]["note"] = "MOCK MODE - set VOXAE_VLM_API_KEY for live grounding"
     except Exception as e:
         raise gr.Error(f"Baseline error: {e}") from e
+
+    progress(0.95, desc="Comparing")
+    lines.append(_agreement_line(trained_mask, result.mask))
+    if result.trace.grounding.rationale:
+        lines.append(f"> Baseline reasoning: *{result.trace.grounding.rationale}*")
+    lines.append(BENCHMARK_NOTE)
 
     return trained_overlay, baseline_overlay, "\n\n".join(lines), trace
 
