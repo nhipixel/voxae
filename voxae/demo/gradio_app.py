@@ -37,19 +37,39 @@ def _gpu(duration: int):
     return spaces.GPU(duration=duration)
 
 
-# Implicit, reasoning-style queries: the contrast between a compose baseline
-# and a model trained on them is most visible when nothing is named directly.
-# Each is paired with a scene that actually contains what it asks about, since
-# an affordance query over an image with no such affordance tests nothing.
+# Held-out dataset frames first, chosen by measured IoU. Three share one frame:
+# identical pixels answering different questions is the clearest demonstration
+# of a query-conditioned model. Stock aerial photography follows, outside the
+# training distribution, so the limitation is something a visitor can see
+# rather than only read.
 EXAMPLE_QUERIES: list[tuple[str, str]] = [
+    (
+        "Identify all ground surfaces, paved or otherwise cleared, that a heavy "
+        "vehicle could drive across.",
+        "uavid-000900",
+    ),
+    (
+        "Find an open stretch of road big enough to stage equipment or park "
+        "several vehicles side by side.",
+        "uavid-000900",
+    ),
+    (
+        "Show road surface that stays clear of overhanging tree canopy, suitable "
+        "for a vehicle to idle without branch clearance issues.",
+        "uavid-000900",
+    ),
+    (
+        "Mark the ground surfaces firm enough for a heavy vehicle to drive "
+        "across, ignoring grass and trees.",
+        "uavid-000400",
+    ),
+    (
+        "Highlight the large building block occupying the upper-left portion of the frame.",
+        "uavid-000400",
+    ),
     ("what vegetation is close enough to the buildings to be a risk?", "Facultad"),
-    ("what would block a fire truck reaching the center?", "Recoleta_01"),
-    ("which surfaces could a heavy vehicle drive on?", "La_Boca"),
     ("where could a small drone land safely?", "Agronom_a_01"),
-    ("where is there open space clear of overhead obstacles?", "farmland"),
-    ("which routes could a vehicle take through the block?", "Villa_del_Parque"),
-    ("which rooftops are large enough to land on?", "Recoleta_03"),
-    ("what green space is big enough for a staging area?", "Agronom_a_02"),
+    ("what would block a fire truck reaching the center?", "Recoleta_01"),
 ]
 
 _request_times: deque[float] = deque(maxlen=64)
@@ -288,7 +308,11 @@ def build_demo() -> gr.Blocks:
                         placeholder="e.g. what would block a fire truck reaching the center?",
                     )
                     run_btn = gr.Button("Segment", variant="primary")
-                    gr.Markdown("Or start from a worked example:")
+                    gr.Markdown(
+                        "Or start from a worked example. The first five are held-out "
+                        "dataset frames with measured scores; the last three are stock "
+                        "aerial photos outside the training distribution."
+                    )
                     gr.Examples(examples=_example_pairs(), inputs=[image_in, query_in])
                 with gr.Column(scale=2):
                     with gr.Row():

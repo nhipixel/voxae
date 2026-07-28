@@ -97,7 +97,7 @@ def curate(
         s = samples[sid]
         # Named by frame, not by sample: the gallery deduplicates by content,
         # so several queries over one frame must point at one copied file.
-        dest = GALLERY / f"uavid-{s.image_id}{Path(s.rel_path).suffix}"
+        dest = GALLERY / f"{s.image_id}{Path(s.rel_path).suffix}"
         if not dest.exists():
             shutil.copy2(data_root / s.rel_path, dest)
         console.print(f"  {sid}  IoU {score:.2f}  -> {dest.name}")
