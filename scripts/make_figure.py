@@ -22,9 +22,10 @@ from rich.console import Console
 app = typer.Typer(add_completion=False)
 console = Console()
 
-TILE = 320
+COL_W = 420
 PAD = 12
 CAPTION_H = 54
+HEADER_H = 26
 COLUMNS = ("image", "ground truth", "trained bridge", "zero-shot baseline")
 
 
@@ -46,21 +47,21 @@ def _font(size: int):
         return ImageFont.load_default()
 
 
-def _tile(img: Image.Image, empty: bool = False) -> Image.Image:
-    """One cell of the grid.
+def _tile(img: Image.Image, height: int, empty: bool = False) -> Image.Image:
+    """One cell of the grid, filling the column at the image's own aspect.
+
+    Square tiles letterbox a wide aerial frame, shrinking every mask for the
+    sake of a grid nobody is measuring. Row height follows the image instead.
 
     An empty prediction renders as the untouched image, which reads as a broken
     figure rather than a wrong answer, so it gets labelled.
     """
-    out = img.convert("RGB").copy()
-    out.thumbnail((TILE, TILE), Image.LANCZOS)
-    canvas = Image.new("RGB", (TILE, TILE), (17, 20, 26))
-    canvas.paste(out, ((TILE - out.width) // 2, (TILE - out.height) // 2))
+    out = img.convert("RGB").resize((COL_W, height), Image.LANCZOS)
     if empty:
-        draw = ImageDraw.Draw(canvas, "RGBA")
-        draw.rectangle((0, TILE - 26, TILE, TILE), fill=(10, 12, 16, 220))
-        draw.text((8, TILE - 20), "no region predicted", fill=(226, 138, 128), font=_font(13))
-    return canvas
+        draw = ImageDraw.Draw(out, "RGBA")
+        draw.rectangle((0, height - 26, COL_W, height), fill=(10, 12, 16, 220))
+        draw.text((8, height - 20), "no region predicted", fill=(226, 138, 128), font=_font(13))
+    return out
 
 
 @app.command()
@@ -134,14 +135,15 @@ def make(
         t_mask = _to_gt_resolution(trained.predict(image, s.text), gt.shape)
         b_mask = _to_gt_resolution(baseline.run(image, s.text).mask, gt.shape)
         gt_img = image.resize(gt.shape[::-1]) if image.size != gt.shape[::-1] else image
+        height = max(120, round(COL_W * gt_img.height / gt_img.width))
         rows.append(
             (
                 s.text,
                 [
-                    _tile(image),
-                    _tile(overlay_mask(gt_img, gt)),
-                    _tile(overlay_mask(gt_img, t_mask), empty=not t_mask.any()),
-                    _tile(overlay_mask(gt_img, b_mask), empty=not b_mask.any()),
+                    _tile(image, height),
+                    _tile(overlay_mask(gt_img, gt), height),
+                    _tile(overlay_mask(gt_img, t_mask), height, empty=not t_mask.any()),
+                    _tile(overlay_mask(gt_img, b_mask), height, empty=not b_mask.any()),
                 ],
                 trained_rec[sid]["iou"],
                 baseline_rec[sid]["iou"],
@@ -151,27 +153,28 @@ def make(
             f"  {sid}: trained {trained_rec[sid]['iou']:.2f} vs {baseline_rec[sid]['iou']:.2f}"
         )
 
-    width = len(COLUMNS) * TILE + (len(COLUMNS) + 1) * PAD
-    height = len(rows) * (TILE + CAPTION_H) + PAD + 26
+    width = len(COLUMNS) * COL_W + (len(COLUMNS) + 1) * PAD
+    height = HEADER_H + sum(r[1][0].height + CAPTION_H for r in rows)
     canvas = Image.new("RGB", (width, height), (10, 12, 16))
     draw = ImageDraw.Draw(canvas)
-    header, caption = _font(15), _font(13)
+    header, caption = _font(16), _font(14)
 
     for col, name in enumerate(COLUMNS):
-        draw.text((PAD + col * (TILE + PAD), 6), name, fill=(150, 160, 175), font=header)
+        draw.text((PAD + col * (COL_W + PAD), 6), name, fill=(150, 160, 175), font=header)
 
-    y = 26
+    y = HEADER_H
     for text, tiles, t_iou, b_iou in rows:
         for col, tile in enumerate(tiles):
-            canvas.paste(tile, (PAD + col * (TILE + PAD), y))
-        draw.text((PAD, y + TILE + 6), f'"{text}"', fill=(228, 232, 238), font=caption)
+            canvas.paste(tile, (PAD + col * (COL_W + PAD), y))
+        bottom = y + tiles[0].height
+        draw.text((PAD, bottom + 8), f'"{text}"', fill=(228, 232, 238), font=caption)
         draw.text(
-            (PAD, y + TILE + 26),
+            (PAD, bottom + 28),
             f"IoU  trained {t_iou:.2f}   zero-shot {b_iou:.2f}",
             fill=(150, 160, 175),
             font=caption,
         )
-        y += TILE + CAPTION_H
+        y = bottom + CAPTION_H
 
     out.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(out)
