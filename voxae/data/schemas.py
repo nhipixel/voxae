@@ -93,8 +93,24 @@ class GroundingResult(BaseModel):
     """Structured output the VLM must produce for a grounding query."""
 
     bbox: BBoxNorm
-    points: list[PointNorm] = Field(min_length=1, max_length=4)
+    points: list[PointNorm] = Field(default_factory=list, max_length=4)
     rationale: str = ""
+
+    @model_validator(mode="after")
+    def _fill_points_from_bbox(self):
+        """A box with no points still localizes the target.
+
+        SAM accepts a box-only prompt, so falling back to the box centre keeps
+        a usable answer instead of discarding one for missing a field that the
+        box already implies.
+        """
+        if not self.points:
+            self.points = [
+                PointNorm(
+                    x=(self.bbox.x1 + self.bbox.x2) // 2, y=(self.bbox.y1 + self.bbox.y2) // 2
+                )
+            ]
+        return self
 
     @model_validator(mode="before")
     @classmethod

@@ -41,10 +41,11 @@ def test_grounding_result_parses_full_payload():
     assert len(result.points) == 1
 
 
-def test_grounding_result_requires_at_least_one_point():
-    payload = {"bbox": {"x1": 0, "y1": 0, "x2": 10, "y2": 10}, "points": []}
-    with pytest.raises(ValidationError):
-        GroundingResult.model_validate(payload)
+def test_grounding_result_falls_back_to_the_box_centre():
+    """A box with no points still localizes the target; SAM takes box-only prompts."""
+    payload = {"bbox": {"x1": 0, "y1": 0, "x2": 10, "y2": 20}, "points": []}
+    result = GroundingResult.model_validate(payload)
+    assert [(p.x, p.y) for p in result.points] == [(5, 10)]
 
 
 def test_grounding_accepts_array_boxes_and_parallel_array_points():
