@@ -42,3 +42,19 @@ def test_takes_the_first_object_when_the_model_returns_several():
 def test_braces_inside_strings_do_not_end_the_object():
     text = '{"rationale": "a road }", "bbox": [1, 2, 3, 4]}'
     assert extract_json(text)["bbox"] == [1, 2, 3, 4]
+
+
+def test_repairs_points_missing_their_second_key():
+    """A point has exactly two integer fields, so {"x": 885, 80} is unambiguous."""
+    text = '{"bbox": [751, 0, 1000, 192], "points": [{"x": 885, 80}, {"x": 950, 50}]}'
+    assert extract_json(text)["points"] == [{"x": 885, "y": 80}, {"x": 950, "y": 50}]
+
+
+def test_repair_also_restores_brace_balance():
+    text = '{"bbox": [7, 0, 9, 4], "points": [{"x": 920, 280], {"x": 850, 150]]}'
+    assert extract_json(text)["points"] == [{"x": 920, "y": 280}, {"x": 850, "y": 150}]
+
+
+def test_well_formed_output_is_never_rewritten():
+    text = '{"bbox": {"x1": 1, "y1": 2, "x2": 3, "y2": 4}, "points": [{"x": 5, "y": 6}]}'
+    assert extract_json(text)["points"] == [{"x": 5, "y": 6}]

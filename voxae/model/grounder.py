@@ -79,16 +79,33 @@ def _first_json_object(text: str) -> str | None:
     return None
 
 
+# Models reliably write points as {"x": 900, 280} or {"x": 900, 280], dropping
+# the second key. A point has exactly two integer fields, so the reading is
+# unambiguous; this is a syntax slip over a valid answer, not a guess about
+# intent. Applied only after a strict parse fails, so well-formed output is
+# never rewritten.
+_BARE_SECOND_COORD = re.compile(r'\{\s*"x"\s*:\s*(-?\d+)\s*,\s*(-?\d+)\s*[}\]]')
+
+
+def _repair_known_slips(text: str) -> str:
+    return _BARE_SECOND_COORD.sub(r'{"x": \1, "y": \2}', text)
+
+
 def extract_json(text: str) -> dict:
     """Pull the first JSON object out of possibly-noisy model output."""
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    candidate = fenced.group(1) if fenced else _first_json_object(text)
-    if candidate is None:
+    last_error: Exception | None = None
+    for source in (text, _repair_known_slips(text)):
+        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", source, re.DOTALL)
+        candidate = fenced.group(1) if fenced else _first_json_object(source)
+        if candidate is None:
+            continue
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as e:
+            last_error = e
+    if last_error is None:
         raise GrounderError(f"no JSON object found in model output: {text[:200]!r}")
-    try:
-        return json.loads(candidate)
-    except json.JSONDecodeError as e:
-        raise GrounderError(f"malformed JSON from model: {e}: {candidate[:200]!r}") from e
+    raise GrounderError(f"malformed JSON from model: {last_error}: {text[:200]!r}") from last_error
 
 
 def _image_to_data_uri(image: Image.Image, max_px: int = 1536) -> str:
