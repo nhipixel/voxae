@@ -43,10 +43,13 @@ def _gpu(duration: int):
 # an affordance query over an image with no such affordance tests nothing.
 EXAMPLE_QUERIES: list[tuple[str, str]] = [
     ("what vegetation is close enough to the buildings to be a risk?", "Facultad"),
-    ("what would block a fire truck reaching the center?", "Recoleta"),
+    ("what would block a fire truck reaching the center?", "Recoleta_01"),
     ("which surfaces could a heavy vehicle drive on?", "La_Boca"),
-    ("where could a small drone land safely?", "Agronom"),
+    ("where could a small drone land safely?", "Agronom_a_01"),
     ("where is there open space clear of overhead obstacles?", "farmland"),
+    ("which routes could a vehicle take through the block?", "Villa_del_Parque"),
+    ("which rooftops are large enough to land on?", "Recoleta_03"),
+    ("what green space is big enough for a staging area?", "Agronom_a_02"),
 ]
 
 _request_times: deque[float] = deque(maxlen=64)
