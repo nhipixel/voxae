@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from voxae.eval.metrics import ciou, giou, iou
+from voxae.eval.metrics import aggregate, ciou, giou, intersection_union, iou
 
 
 def _mask(h, w, ys, xs):
@@ -59,6 +59,23 @@ def test_ciou_weights_by_area():
 def test_giou_empty_lists_raise():
     with pytest.raises(ValueError):
         giou([], [])
+
+
+def test_aggregate_matches_mask_based_metrics():
+    """Scalar records must reproduce what the mask-based functions compute."""
+    a = _mask(10, 10, slice(0, 10), slice(0, 10))
+    b = _mask(10, 10, slice(0, 1), slice(0, 1))
+    c = _mask(10, 10, slice(9, 10), slice(9, 10))
+    preds, gts = [a, b], [a, c]
+
+    records = []
+    for p, g in zip(preds, gts, strict=True):
+        i, u = intersection_union(p, g)
+        records.append({"iou": 1.0 if u == 0 else i / u, "intersection": i, "union": u})
+
+    scores = aggregate(records)
+    assert scores["giou"] == pytest.approx(giou(preds, gts))
+    assert scores["ciou"] == pytest.approx(ciou(preds, gts))
 
 
 def test_prediction_is_resampled_onto_the_ground_truth_grid():

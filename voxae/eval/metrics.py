@@ -20,14 +20,34 @@ def _validate(pred: np.ndarray, gt: np.ndarray) -> tuple[np.ndarray, np.ndarray]
     return pred.astype(bool), gt.astype(bool)
 
 
+def intersection_union(pred: np.ndarray, gt: np.ndarray) -> tuple[int, int]:
+    """Pixel counts behind both metrics, so a run can score without keeping masks."""
+    pred, gt = _validate(pred, gt)
+    return int(np.logical_and(pred, gt).sum()), int(np.logical_or(pred, gt).sum())
+
+
 def iou(pred: np.ndarray, gt: np.ndarray) -> float:
     """IoU of two binary masks. Convention: both empty -> 1.0 (correct 'nothing')."""
-    pred, gt = _validate(pred, gt)
-    union = np.logical_or(pred, gt).sum()
+    inter, union = intersection_union(pred, gt)
     if union == 0:
         return 1.0
-    inter = np.logical_and(pred, gt).sum()
     return float(inter / union)
+
+
+def aggregate(records: list[dict]) -> dict[str, float]:
+    """gIoU/cIoU from per-sample {iou, intersection, union} records.
+
+    Both metrics reduce to scalars, so a long run never has to hold masks in
+    memory and can resume from a partial log.
+    """
+    if not records:
+        raise ValueError("no records to aggregate")
+    total_i = sum(r["intersection"] for r in records)
+    total_u = sum(r["union"] for r in records)
+    return {
+        "giou": float(np.mean([r["iou"] for r in records])),
+        "ciou": 1.0 if total_u == 0 else float(total_i / total_u),
+    }
 
 
 def giou(preds: list[np.ndarray], gts: list[np.ndarray]) -> float:

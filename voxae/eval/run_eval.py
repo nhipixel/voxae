@@ -22,7 +22,7 @@ from PIL import Image
 
 from voxae.data import rle
 from voxae.data.schemas import QuerySample
-from voxae.eval.metrics import ciou, giou
+from voxae.eval.metrics import aggregate, intersection_union
 
 
 def _to_gt_resolution(pred: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
@@ -41,40 +41,97 @@ def _to_gt_resolution(pred: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
     return np.asarray(resized) > 127
 
 
+def _load_records(path: Path | None) -> dict[str, dict]:
+    """Per-sample results already on disk, keyed by sample id."""
+    if path is None or not path.exists():
+        return {}
+    done = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            r = json.loads(line)
+            done[r["sample_id"]] = r
+    return done
+
+
 def evaluate(
     predictor,
     samples: list[QuerySample],
     data_root: Path,
+    log_every: int = 25,
+    records_path: Path | None = None,
 ) -> dict:
-    """Run a predictor over samples; aggregate gIoU/cIoU overall + per family."""
-    preds: dict[str, list[np.ndarray]] = defaultdict(list)
-    gts: dict[str, list[np.ndarray]] = defaultdict(list)
+    """Run a predictor over samples; aggregate gIoU/cIoU overall + per family.
+
+    Each sample is scored to scalars and appended to records_path as it
+    completes. A hosted-API predictor takes tens of minutes and costs real
+    money per call, so a run that dies partway must not lose the calls it
+    already paid for, and silence for that long is indistinguishable from a
+    hang. Scoring to scalars also keeps memory flat: full-resolution masks are
+    never accumulated.
+    """
+    done = _load_records(records_path)
+    if done:
+        print(f"resuming: {len(done)} samples already scored", flush=True)
+    records: list[dict] = []
     latencies: list[float] = []
     failures = 0
 
-    for s in samples:
+    for i, s in enumerate(samples, start=1):
+        if s.sample_id in done:
+            records.append(done[s.sample_id])
+            continue
+
         image = Image.open(data_root / s.rel_path)
         t0 = time.perf_counter()
+        failed = False
         try:
             pred = predictor.predict(image, s.text)
-        except Exception:
+        except Exception as e:
+            failed = True
             failures += 1
+            print(f"  sample {s.sample_id} failed: {e}", flush=True)
             pred = np.zeros((image.height, image.width), dtype=bool)
-        latencies.append(time.perf_counter() - t0)
+        latency = time.perf_counter() - t0
+        latencies.append(latency)
+
         gt = rle.decode(s.rle)
-        pred = _to_gt_resolution(pred, gt.shape)
-        for key in ("all", str(s.family)):
-            preds[key].append(pred)
-            gts[key].append(gt)
+        inter, union = intersection_union(_to_gt_resolution(pred, gt.shape), gt)
+        record = {
+            "sample_id": s.sample_id,
+            "family": str(s.family),
+            "iou": 1.0 if union == 0 else inter / union,
+            "intersection": inter,
+            "union": union,
+            "latency_s": round(latency, 3),
+            "failed": failed,
+        }
+        records.append(record)
+        if records_path is not None:
+            with records_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record) + "\n")
+
+        if log_every and i % log_every == 0:
+            rate = float(np.mean(latencies)) if latencies else 0.0
+            eta_min = (len(samples) - i) * rate / 60
+            print(
+                f"{i}/{len(samples)}  {rate:.1f}s/sample  ~{eta_min:.0f} min left  "
+                f"failures={failures}",
+                flush=True,
+            )
 
     report: dict = {
         "n": len(samples),
-        "failures": failures,
+        "failures": sum(r["failed"] for r in records),
         "latency_s_mean": round(float(np.mean(latencies)), 3) if latencies else None,
     }
-    for key in sorted(preds):
-        report[f"giou_{key}"] = round(giou(preds[key], gts[key]), 4)
-        report[f"ciou_{key}"] = round(ciou(preds[key], gts[key]), 4)
+    by_family: dict[str, list[dict]] = defaultdict(list)
+    for r in records:
+        by_family["all"].append(r)
+        by_family[r["family"]].append(r)
+    for key in sorted(by_family):
+        scores = aggregate(by_family[key])
+        report[f"giou_{key}"] = round(scores["giou"], 4)
+        report[f"ciou_{key}"] = round(scores["ciou"], 4)
     return report
 
 
@@ -129,15 +186,18 @@ def main() -> None:
     else:
         predictor = _ZeroShotAdapter()
 
+    ann = args.data_root / "processed" / "annotations"
+    records_path = ann / f"eval_{args.predictor}_{args.split}.records.jsonl"
     report = {
         "predictor": args.predictor,
         "split": args.split,
-        **evaluate(predictor, samples, args.data_root),
+        **evaluate(predictor, samples, args.data_root, records_path=records_path),
     }
     print(json.dumps(report, indent=2))
-    out = args.data_root / "processed" / "annotations" / f"eval_{args.predictor}_{args.split}.json"
+    out = ann / f"eval_{args.predictor}_{args.split}.json"
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"saved -> {out}")
+    print(f"per-sample records -> {records_path}")
 
 
 if __name__ == "__main__":
