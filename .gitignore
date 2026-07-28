@@ -18,6 +18,8 @@ data/raw/
 data/interim/
 data/processed/
 data/cache/
+data/colab_bundle/
+data/colab_bundle.zip
 *.safetensors
 *.pt
 *.pth

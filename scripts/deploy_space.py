@@ -105,18 +105,39 @@ def deploy(
     )
 
     if checkpoint:
-        state = checkpoint / "state.pt"
-        if not state.exists():
-            console.print(f"[red]{state} not found[/red]")
+        source = checkpoint / "state.pt"
+        if not source.exists():
+            console.print(f"[red]{source} not found[/red]")
             raise typer.Exit(1)
-        size_mb = state.stat().st_size / 1e6
-        console.print(f"uploading checkpoint ({size_mb:.0f} MB), this can take a few minutes...")
-        api.upload_file(
-            path_or_fileobj=str(state),
-            path_in_repo="checkpoint/state.pt",
-            repo_id=space_id,
-            repo_type="space",
-        )
+        try:
+            import torch
+        except ImportError:
+            console.print(
+                "[red]torch is required to trim the checkpoint (uv sync --extra ml)[/red]"
+            )
+            raise typer.Exit(1) from None
+
+        # A training checkpoint carries two fp32 AdamW moments per parameter,
+        # roughly three quarters of the file. Inference needs only the weights
+        # and the config describing how to rebuild the model around them.
+        full = torch.load(source, map_location="cpu", weights_only=False)
+        slim = {
+            "trainable": full["trainable"],
+            "config": full.get("config", {}),
+            "step": full.get("step", 0),
+        }
+        with tempfile.TemporaryDirectory() as td:
+            trimmed = Path(td) / "state.pt"
+            torch.save(slim, trimmed)
+            before = source.stat().st_size / 1e6
+            after = trimmed.stat().st_size / 1e6
+            console.print(f"uploading checkpoint ({before:.0f} MB trimmed to {after:.0f} MB)...")
+            api.upload_file(
+                path_or_fileobj=str(trimmed),
+                path_in_repo="checkpoint/state.pt",
+                repo_id=space_id,
+                repo_type="space",
+            )
         console.print("[green]checkpoint uploaded -> checkpoint/state.pt[/green]")
 
     console.print(
