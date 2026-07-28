@@ -188,11 +188,9 @@ def lookup_ground_truth(image: Image.Image, query: str) -> tuple[np.ndarray | No
     digest = hashlib.md5(image.convert("RGB").tobytes()).hexdigest()
     if digest != entry["image_md5"]:
         return None, None
-    from voxae.data import rle
-
-    from voxae.data.schemas import MaskRLE  # isort: skip
-
-    return rle.decode(MaskRLE(**entry["rle"])), entry
+    # Stored as PNG so the demo needs no COCO decoder to read it.
+    png = base64.b64decode(entry["mask_png_b64"])
+    return np.asarray(Image.open(io.BytesIO(png)).convert("1")) > 0, entry
 
 
 def _to_image_size(mask: np.ndarray, size: tuple[int, int]) -> np.ndarray:

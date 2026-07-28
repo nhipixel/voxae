@@ -13,7 +13,9 @@ sample it came from, and the texts are unique within the split.
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import json
 from pathlib import Path
 from typing import Annotated
@@ -35,6 +37,7 @@ def export(
     out: Annotated[Path, typer.Option()] = OUT,
 ) -> None:
     """Write RLE ground truth for every dataset-backed demo example."""
+    from voxae.data import rle
     from voxae.demo.gradio_app import DATASET_EXAMPLES, EXAMPLE_QUERIES
     from voxae.train.collate import load_samples
 
@@ -72,13 +75,19 @@ def export(
         shipped = next(gallery.glob(f"*{stem}.*"), None)
         source = shipped or (data_root / s.rel_path)
         digest = hashlib.md5(Image.open(source).convert("RGB").tobytes()).hexdigest()
+        # Stored as PNG, not RLE: decoding RLE needs pycocotools, and the demo
+        # should not carry a compiled COCO dependency to show five masks. A
+        # 1-bit PNG is smaller anyway.
+        mask = rle.decode(s.rle)
+        buf = io.BytesIO()
+        Image.fromarray(mask).convert("1").save(buf, format="PNG", optimize=True)
         payload[text] = {
             "sample_id": s.sample_id,
             "image_stem": stem,
             "image_md5": digest,
             "family": str(s.family),
             "area_pct": round(s.area_pct, 3),
-            "rle": s.rle.model_dump(),
+            "mask_png_b64": base64.b64encode(buf.getvalue()).decode(),
         }
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
