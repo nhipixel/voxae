@@ -22,9 +22,9 @@ const LEVELS = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
 const START: Record<LayerKey, boolean> = { trained: true, baseline: false, ground_truth: true };
 
 const LAYERS: { key: LayerKey; name: string; note: string; swatch: string }[] = [
-  { key: "trained", name: "Trained bridge", note: "relief", swatch: SHEET.contour },
-  { key: "baseline", name: "Zero-shot baseline", note: "overprint", swatch: SHEET.revision },
-  { key: "ground_truth", name: "Surveyed answer", note: "neatline", swatch: SHEET.hydro },
+  { key: "trained", name: "Trained bridge", note: "tinted relief", swatch: SHEET.contour },
+  { key: "baseline", name: "Zero-shot baseline", note: "diagonal hatch", swatch: SHEET.revision },
+  { key: "ground_truth", name: "Surveyed answer", note: "outline only", swatch: SHEET.hydro },
 ];
 
 // A cold call runs about 20 s and a warm one about 8 s. The bar is paced
@@ -222,36 +222,54 @@ export default function Workbench() {
 
   return (
     <>
-      <section className="mb-4">
-        <label htmlFor="query" className="sheet-label">
-          Question
-        </label>
-        <div className="mt-2 h-px bg-neat" />
-        <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-stretch">
-          <textarea
-            id="query"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) read();
-            }}
-            rows={2}
-            className="flex-1 resize-none border border-neat bg-linen px-3 py-2 text-sm leading-relaxed outline-none placeholder:text-faint"
-            placeholder="Where could a small drone land safely?"
-          />
-          <div className="flex gap-2 md:flex-col">
-            <button
-              type="button"
-              onClick={read}
-              disabled={pending || !query.trim()}
-              className="sheet-label flex-1 bg-ink px-5 py-2.5 !text-linen transition disabled:opacity-40 md:flex-none"
-            >
-              {pending ? "Reading the scene" : "Read the scene"}
-            </button>
+      {/* The sheet and the things you ask it, side by side. */}
+      <div className="grid gap-x-9 gap-y-6 lg:grid-cols-[minmax(0,1fr)_21rem]">
+        <figure className="m-0">
+          <div className="border border-ink/25 bg-mylar">
+            <Plate base={base} layers={mainLayers} liftable />
+          </div>
+          <figcaption className="sheet-label mt-2 flex justify-between">
+            <span>{prediction ? "Hold the sheet to lift the overlay" : "Nothing drawn yet"}</span>
+            <span className="datum normal-case tracking-normal">
+              {blob ? filename : example.image.includes("000900") ? "Frame A" : "Frame B"}
+            </span>
+          </figcaption>
+        </figure>
+
+        <aside className="flex flex-col gap-6">
+          <section>
+            <h2 className="sheet-label">Pick a photograph</h2>
+            <div className="mt-2 h-px bg-neat" />
+            <ul className="mt-2">
+              {EXAMPLES.map((ex) => {
+                const active = example.query === ex.query && !blob;
+                return (
+                  <li key={ex.query}>
+                    <button
+                      type="button"
+                      aria-current={active ? "true" : undefined}
+                      onClick={() => pickExample(ex)}
+                      className={`flex w-full items-baseline gap-2 py-1.5 text-left text-xs transition ${
+                        active ? "text-ink" : "text-faint hover:text-ink"
+                      }`}
+                    >
+                      <span
+                        aria-hidden
+                        className={`h-1.5 w-1.5 shrink-0 rotate-45 border border-ink/40 ${active ? "bg-ink" : ""}`}
+                      />
+                      <span>{ex.label}</span>
+                      <span className="datum ml-auto text-[10px]">
+                        {ex.image.includes("000900") ? "A" : "B"}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
             <button
               type="button"
               onClick={() => uploadRef.current?.click()}
-              className="sheet-label border border-neat px-5 py-2.5 transition hover:border-ink hover:!text-ink md:flex-none"
+              className="sheet-label mt-2 w-full border border-neat py-2 transition hover:border-ink hover:!text-ink"
             >
               Upload image
             </button>
@@ -266,58 +284,110 @@ export default function Workbench() {
                 e.target.value = "";
               }}
             />
-          </div>
-        </div>
-
-        {pending && (
-          <div className="mt-3" role="status" aria-live="polite">
-            <div className="h-[3px] w-full bg-mylar">
-              <div
-                className="h-full bg-contour transition-[width] duration-150 ease-linear"
-                style={{ width: `${progress * 100}%` }}
-              />
-            </div>
-            <p className="datum mt-1.5 flex justify-between text-[11px] text-faint">
-              <span>
-                {waited < 6
-                  ? "Sending the photograph"
-                  : waited < 14
-                    ? "The bridge is reading it"
-                    : "Waiting on the baseline's hosted model"}
-              </span>
-              <span>{waited.toFixed(1)} s</span>
+            <p className="mt-2 text-[11px] leading-relaxed text-faint">
+              {blob
+                ? "Your photograph has no annotated answer, so this run will not be scored."
+                : "The first three scenes are the same photograph asked three different things."}
             </p>
+          </section>
+
+          <section>
+            <label htmlFor="query" className="sheet-label">
+              Ask it something
+            </label>
+            <div className="mt-2 h-px bg-neat" />
+            <textarea
+              id="query"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) read();
+              }}
+              rows={4}
+              className="mt-3 w-full resize-none border border-neat bg-linen px-3 py-2 text-sm leading-relaxed outline-none placeholder:text-faint"
+              placeholder="Where could a small drone land safely?"
+            />
+            <button
+              type="button"
+              onClick={read}
+              disabled={pending || !query.trim()}
+              className="sheet-label mt-2 w-full bg-ink py-3 !text-linen transition disabled:opacity-40"
+            >
+              {pending ? "Reading the scene" : "Read the scene"}
+            </button>
+
+            {pending && (
+              <div className="mt-3" role="status" aria-live="polite">
+                <div className="h-[3px] w-full bg-mylar">
+                  <div
+                    className="h-full bg-contour transition-[width] duration-150 ease-linear"
+                    style={{ width: `${progress * 100}%` }}
+                  />
+                </div>
+                <p className="datum mt-1.5 flex justify-between gap-2 text-[11px] text-faint">
+                  <span>
+                    {waited < 6
+                      ? "Sending the photograph"
+                      : waited < 14
+                        ? "The bridge is reading it"
+                        : "Waiting on the baseline"}
+                  </span>
+                  <span>{waited.toFixed(1)} s</span>
+                </p>
+              </div>
+            )}
+
+            {error && (
+              <p className="mt-3 border-l-2 border-revision bg-revision/5 px-3 py-2 text-xs leading-relaxed">
+                {error}
+              </p>
+            )}
+          </section>
+        </aside>
+      </div>
+
+      {/* A legend belongs with its map, so it sits directly beneath. */}
+      {prediction && (
+        <section className="mt-5">
+          <div className="h-px bg-neat" />
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-2 pt-3">
+            <h2 className="sheet-label">Showing</h2>
+            {LAYERS.map(({ key, name, note, swatch }) => {
+              const has = key === "trained" ? trained : key === "baseline" ? baseline : gt;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  disabled={!has}
+                  aria-pressed={Boolean(layers[key] && has)}
+                  onClick={() => setLayers((l) => ({ ...l, [key]: !l[key] }))}
+                  className="flex items-center gap-2 text-xs transition disabled:opacity-35"
+                >
+                  <span
+                    aria-hidden
+                    className="h-2.5 w-2.5 shrink-0 border border-ink/30"
+                    style={{ background: layers[key] && has ? swatch : "transparent" }}
+                  />
+                  <span className={layers[key] && has ? "text-ink" : "text-faint"}>{name}</span>
+                  <span className="datum text-[10px] text-faint">{note}</span>
+                </button>
+              );
+            })}
           </div>
-        )}
-
-        {error && (
-          <p className="mt-3 border-l-2 border-revision bg-revision/5 px-3 py-2 text-xs leading-relaxed">
-            {error}
-          </p>
-        )}
-      </section>
-
-      <figure className="m-0">
-        <div className="border border-ink/25 bg-mylar">
-          <Plate base={base} layers={mainLayers} liftable />
-        </div>
-        <figcaption className="sheet-label mt-2 flex justify-between">
-          <span>Hold the sheet to lift the overlay</span>
-          {prediction && (
-            <span className="datum normal-case tracking-normal">
-              {prediction.image.width} x {prediction.image.height} px
-            </span>
-          )}
-        </figcaption>
-      </figure>
+        </section>
+      )}
 
       {trained && (
         <section className="mt-6">
-          <div className="flex items-baseline justify-between">
+          <div className="flex items-baseline justify-between gap-4">
             <label htmlFor="sea" className="sheet-label">
               Sea level
             </label>
-            <span className="datum text-sm">{waterline.toFixed(2)}</span>
+            <p className="text-xs text-faint">
+              Only ground the model is at least{" "}
+              <span className="datum text-ink">{Math.round(waterline * 100)}%</span> sure of counts
+              as the answer
+            </p>
           </div>
           <div className="mt-2 h-px bg-neat" />
           <input
@@ -333,73 +403,46 @@ export default function Workbench() {
             }}
             className="gauge mt-4"
           />
-          <p className="mt-3 max-w-2xl text-xs leading-relaxed text-faint">
-            Raise it and only the model&rsquo;s most confident ground stays above water. Nothing is
-            sent when you drag: the whole confidence surface arrived with the answer.
+          <p className="datum mt-1 flex justify-between text-[10px] text-faint">
+            <span>5%, almost everything counts</span>
+            <span>95%, only what it is certain of</span>
           </p>
         </section>
       )}
 
-      <section className="mt-9 grid gap-x-10 gap-y-8 md:grid-cols-2 lg:grid-cols-[minmax(0,15rem)_minmax(0,1fr)_minmax(0,17rem)]">
-        <div>
-          <h2 className="sheet-label">Layers</h2>
-          <div className="mt-2 h-px bg-neat" />
-          <ul className="mt-3">
-            {LAYERS.map(({ key, name, note, swatch }) => {
-              const has = key === "trained" ? trained : key === "baseline" ? baseline : gt;
-              return (
-                <li key={key}>
-                  <button
-                    type="button"
-                    disabled={!has}
-                    aria-pressed={Boolean(layers[key] && has)}
-                    onClick={() => setLayers((l) => ({ ...l, [key]: !l[key] }))}
-                    className="flex w-full items-center gap-2.5 py-1.5 text-left text-xs transition disabled:opacity-35"
-                  >
-                    <span
-                      aria-hidden
-                      className="h-2.5 w-2.5 shrink-0 border border-ink/30"
-                      style={{ background: layers[key] && has ? swatch : "transparent" }}
-                    />
-                    <span className={layers[key] && has ? "text-ink" : "text-faint"}>{name}</span>
-                    <span className="datum ml-auto text-[10px] text-faint">{note}</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-
-        <div>
+      {prediction && (
+        <section className="mt-8">
           <div className="flex items-baseline justify-between">
             <h2 className="sheet-label">Reading</h2>
-            <span className="sheet-label">{gt ? gt.family : prediction ? "not surveyed" : ""}</span>
+            <span className="sheet-label">{gt ? `${gt.family} question` : "not surveyed"}</span>
           </div>
           <div className="mt-2 h-px bg-neat" />
-          {prediction ? (
-            <dl className="datum mt-4 grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3">
-              <Cell label="Agreement with survey" value={shownIou?.toFixed(3) ?? "not surveyed"} big />
-              <Cell
-                label="Baseline agreement"
-                value={gt?.baseline_iou != null ? gt.baseline_iou.toFixed(3) : "not surveyed"}
-                big
-              />
-              <Cell
-                label="Ground above water"
-                value={shownArea != null ? `${shownArea.toFixed(1)}%` : "-"}
-                big
-              />
-              <Cell label="Bridge" value={trained ? `${trained.latency_s.toFixed(2)} s` : "-"} />
-              <Cell label="Baseline" value={baseline ? `${baseline.latency_s.toFixed(2)} s` : "did not run"} />
-              <Cell label="Round trip" value={elapsed != null ? `${elapsed.toFixed(1)} s` : "-"} />
-            </dl>
-          ) : (
-            <p className="mt-3 max-w-md text-xs leading-relaxed text-faint">
-              Pick a scene or upload a photograph, ask it something, and the numbers land here.
-            </p>
-          )}
+          <dl className="datum mt-4 grid grid-cols-2 gap-x-8 gap-y-5 sm:grid-cols-3 lg:grid-cols-6">
+            <Cell label="Bridge agreement" value={shownIou?.toFixed(3) ?? "not surveyed"} big />
+            <Cell
+              label="Baseline agreement"
+              value={gt?.baseline_iou != null ? gt.baseline_iou.toFixed(3) : "not surveyed"}
+              big
+            />
+            <Cell
+              label="Ground above water"
+              value={shownArea != null ? `${shownArea.toFixed(1)}%` : "-"}
+              big
+            />
+            <Cell label="Bridge took" value={trained ? `${trained.latency_s.toFixed(2)} s` : "-"} />
+            <Cell
+              label="Baseline took"
+              value={baseline ? `${baseline.latency_s.toFixed(2)} s` : "did not run"}
+            />
+            <Cell label="Round trip" value={elapsed != null ? `${elapsed.toFixed(1)} s` : "-"} />
+          </dl>
+          <p className="mt-4 max-w-3xl text-xs leading-relaxed text-faint">
+            Agreement is the overlap between an answer and the annotated region, from 0 to 1. The
+            first three numbers are recomputed here as you move the sea level; nothing is sent when
+            you drag, because the whole confidence surface arrived with the answer.
+          </p>
 
-          {prediction?.baseline_error && (
+          {prediction.baseline_error && (
             <p className="mt-4 border-l-2 border-revision pl-3 text-xs leading-relaxed text-faint">
               The baseline&rsquo;s hosted grounding model did not answer. The reading above is
               unaffected.
@@ -410,42 +453,8 @@ export default function Workbench() {
               The baseline is returning placeholder boxes: no grounding key is set.
             </p>
           )}
-        </div>
-
-        <div>
-          <h2 className="sheet-label">Scenes</h2>
-          <div className="mt-2 h-px bg-neat" />
-          <ul className="mt-3">
-            {EXAMPLES.map((ex) => {
-              const active = example.query === ex.query && !blob;
-              return (
-                <li key={ex.query}>
-                  <button
-                    type="button"
-                    aria-current={active ? "true" : undefined}
-                    onClick={() => pickExample(ex)}
-                    className={`flex w-full items-baseline gap-2 py-1.5 text-left text-xs transition ${
-                      active ? "text-ink" : "text-faint hover:text-ink"
-                    }`}
-                  >
-                    <span
-                      aria-hidden
-                      className={`mt-1 h-1.5 w-1.5 shrink-0 rotate-45 border border-ink/40 ${active ? "bg-ink" : ""}`}
-                    />
-                    <span>{ex.label}</span>
-                    <span className="datum ml-auto text-[10px]">
-                      {ex.image.includes("000900") ? "A" : "B"}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          <p className="mt-3 text-xs leading-relaxed text-faint">
-            The first three read the same photograph. Identical pixels, three different answers.
-          </p>
-        </div>
-      </section>
+        </section>
+      )}
 
       {prediction && (
         <section className="mt-12">
@@ -473,7 +482,7 @@ export default function Workbench() {
               score={gt?.baseline_iou ?? null}
               caption={
                 baseline?.rationale
-                  ? `Asked a hosted model for a box, then segmented inside it. It looked for: ${baseline.rationale}`
+                  ? `Asks a hosted model for a box, then segments inside it. It looked for: ${baseline.rationale}`
                   : "Asks a hosted model for a box, then segments inside it. It did not answer this time."
               }
               base={base}
@@ -504,7 +513,7 @@ function Cell({ label, value, big }: { label: string; value: string; big?: boole
   return (
     <div>
       <dt className="sheet-label !text-[10px]">{label}</dt>
-      <dd className={big ? "mt-1 text-xl" : "mt-1 text-sm"}>{value}</dd>
+      <dd className={big ? "mt-1 text-2xl" : "mt-1 text-sm"}>{value}</dd>
     </div>
   );
 }
