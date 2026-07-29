@@ -14,10 +14,14 @@ export default function Home() {
         <div className="settle flex flex-wrap items-start justify-between gap-x-8 gap-y-4 pt-5">
           <div className="max-w-xl">
             <h1 className="sheet-title text-[2.6rem] leading-[1.05]">Voxae</h1>
+            <p className="sheet-label mt-2 !text-ink">
+              A vision language model that segments what you ask for, for drones and robots that
+              have to read a scene at runtime
+            </p>
             <p className="mt-3 text-[0.95rem] leading-relaxed">
-              Ask an aerial photograph a question in plain language. The model answers with a
-              region, and its confidence is drawn as terrain: contours mark equal certainty, and
-              you set the waterline that decides what counts.
+              Ask an aerial photograph a question in plain language. It answers with a region rather
+              than a label, and its confidence is drawn as terrain: contours mark equal certainty,
+              and you set the waterline that decides what counts.
             </p>
           </div>
           <dl className="datum grid grid-cols-2 gap-x-6 gap-y-1 text-[11px] text-faint">

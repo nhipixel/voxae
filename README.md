@@ -5,11 +5,18 @@
 Ask an aerial scene a question in plain language and get back the exact pixels that answer it.
 A perception primitive for embodied agents (drones, robots, autonomous systems), demonstrated on drone-captured scenes.
 
-[![Demo](https://img.shields.io/badge/demo-Hugging%20Face%20Space-blue)](https://huggingface.co/spaces/nhibuilds/voxae)
+[![App](https://img.shields.io/badge/app-voxae.vercel.app-2c6b8a)](https://voxae.vercel.app)
+[![Space](https://img.shields.io/badge/compare-Hugging%20Face%20Space-blue)](https://huggingface.co/spaces/nhibuilds/voxae)
 [![CI](https://github.com/nhipixel/voxae/actions/workflows/ci.yml/badge.svg)](https://github.com/nhipixel/voxae/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-**[Try it](https://huggingface.co/spaces/nhibuilds/voxae).** Both models run on the same query, side by side.
+**[Try it](https://voxae.vercel.app).** Ask a scene a question and the bridge answers in about a second,
+drawn as terrain: contours mark equal confidence, you set the waterline. Held-out frames are scored
+against the annotation on the spot, and you can put the zero-shot baseline on the same query to see both
+answers together.
+
+The **[Hugging Face Space](https://huggingface.co/spaces/nhibuilds/voxae)** runs both models side by side
+on one query, and is the API the app calls.
 
 ![Voxae demo](assets/demo_v1.gif)
 
@@ -42,7 +49,11 @@ binary mask
 
 The language model never describes a region in words. Its hidden state at a special `<SEG>` token is projected directly into SAM 2.1's prompt space, so the gradient from a wrong pixel flows back through the projector and into the language model. Trained end to end with LoRA under cross-entropy + BCE + Dice.
 
-A **zero-shot compose baseline** ships alongside it: a hosted VLM emits a bounding box and points as text, SAM 2.1 turns them into a mask, no training. It is the floor the trained bridge has to beat, and the demo runs both on the same query so the difference is visible rather than described.
+A **zero-shot compose baseline** ships alongside it: a hosted VLM emits a bounding box and points as text, SAM 2.1 turns them into a mask, no training. It is the floor the trained bridge has to beat, and both run on the same query so the difference is visible rather than described.
+
+The two run independently. The bridge is one forward pass and answers in about a second; the baseline
+waits on a third-party API and has been measured between 5 and 140 seconds, so the comparison is
+requested on its own rather than bundled into every query. That gap is one of the results.
 
 Full details: [`docs/architecture.md`](docs/architecture.md).
 
@@ -73,6 +84,11 @@ Held-out test split, 306 samples, both predictors on identical inputs.
 | unparseable responses | **0** | 1 / 306 |
 
 Inference is one teacher-forced forward pass with no autoregressive generation. The baseline pays an API round trip plus a full SAM encode, and can emit output that fails to parse at all, a failure mode an embedding handoff does not have.
+
+The gap survives deployment. Measured against the hosted Space over the public internet, a bridge query
+returns in **1.0 s warm and 3.8 s cold**, including image upload and mask transport. The same request
+with the baseline attached has been measured between 36 s and 143 s, entirely dependent on how the
+third-party grounding API happens to be behaving.
 
 ![Trained bridge versus zero-shot baseline](assets/comparison.png)
 
@@ -111,6 +127,31 @@ uv run python app.py                # Gradio UI
 Set `VOXAE_CHECKPOINT_REPO` to a Hub model repo (or `VOXAE_CHECKPOINT_DIR` to a local path) to enable the comparison view; without it the demo runs the baseline alone.
 
 Trained weights: [`nhibuilds/voxae-checkpoint`](https://huggingface.co/nhibuilds/voxae-checkpoint).
+
+The [app](https://voxae.vercel.app) lives in [`web/`](web) and is a client of the Space, not a second
+copy of the model. A route handler holds the token server side and calls one JSON endpoint; the response
+carries the probability field and masks as PNGs, around 60 KB, so every overlay and every number that
+moves with the waterline is computed in the browser from a single request:
+
+```bash
+cd web && npm install
+cp .env.example .env.local          # HF_TOKEN and VOXAE_SPACE_URL
+npm run dev
+```
+
+The same endpoint is callable from anything:
+
+```python
+from gradio_client import Client, handle_file
+r = Client("nhibuilds/voxae").predict(
+    image=handle_file("frame.png"),
+    query="where could a small drone land safely?",
+    threshold=0.5,
+    include_baseline=False,      # True also runs the zero-shot comparison
+    api_name="/predict",
+)
+print(r["trained"]["latency_s"], r["ground_truth"])
+```
 
 Training and evaluation run from YAML configs:
 

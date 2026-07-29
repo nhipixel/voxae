@@ -363,7 +363,7 @@ export default function Workbench() {
                 <p className="datum mt-1.5 flex justify-between gap-2 text-[11px] text-faint">
                   <span>
                     {comparing
-                      ? "The baseline calls a hosted model, which is slow"
+                      ? "Running the zero-shot baseline on the same query"
                       : waited < 4
                         ? "Sending the photograph"
                         : "The bridge is reading it"}
@@ -537,7 +537,7 @@ export default function Workbench() {
                 baseline?.rationale
                   ? `Asks a hosted model for a box, then segments inside it. It looked for: ${baseline.rationale}`
                   : prediction.baseline_skipped
-                    ? "Asks a hosted model for a box, then segments inside it. Run the comparison to fill this in; it takes far longer than the bridge, which is the point."
+                    ? "Asks a hosted model for a box, then segments inside it. Run the comparison to fill this in."
                     : "Asks a hosted model for a box, then segments inside it. It did not answer this time."
               }
               base={base}
