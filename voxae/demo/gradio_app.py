@@ -382,14 +382,22 @@ def _as_image(value) -> Image.Image | None:
 
 @_gpu(duration=120)
 def api_predict(
-    image: Image.Image | None, query: str, threshold: float = DEFAULT_THRESHOLD
+    image: Image.Image | None,
+    query: str,
+    threshold: float = DEFAULT_THRESHOLD,
+    include_baseline: bool = True,
 ) -> dict:
-    """Both predictors over one query, as JSON, for any frontend.
+    """One or both predictors over a query, as JSON, for any frontend.
 
     The Gradio UI is one client of the model, not the only possible one. This
     returns the probability field and masks plus the numbers behind them, so a
     frontend composites them however it likes, and returns ground truth only
     where a correct answer genuinely exists.
+
+    The bridge answers in about a second; the baseline calls a hosted model and
+    can take a minute or more on a bad day. `include_baseline=False` skips it so
+    a caller can show the trained answer immediately and ask for the comparison
+    separately.
     """
     image = _prepare(_as_image(image), query)
     payload: dict = {
@@ -422,27 +430,30 @@ def api_predict(
 
     # Keep the trained result when the hosted VLM fails.
     result = None
-    t0 = time.perf_counter()
-    try:
-        result = BASELINE.run(image, query)
-        latency = time.perf_counter() - t0
-        grounding = result.trace.grounding
-        payload["baseline"] = {
-            "model": BASELINE.name if hasattr(BASELINE, "name") else "zero-shot",
-            "mask_png": _mask_data_uri(result.mask),
-            "area_pct": round(float(result.mask.mean()) * 100, 3),
-            "latency_s": round(latency, 3),
-            "bbox_norm": [
-                grounding.bbox.x1,
-                grounding.bbox.y1,
-                grounding.bbox.x2,
-                grounding.bbox.y2,
-            ],
-            "rationale": grounding.rationale,
-            "live": BASELINE_LIVE,
-        }
-    except Exception as e:
-        payload["baseline_error"] = f"{type(e).__name__}: {e}"
+    if include_baseline:
+        t0 = time.perf_counter()
+        try:
+            result = BASELINE.run(image, query)
+            latency = time.perf_counter() - t0
+            grounding = result.trace.grounding
+            payload["baseline"] = {
+                "model": BASELINE.name if hasattr(BASELINE, "name") else "zero-shot",
+                "mask_png": _mask_data_uri(result.mask),
+                "area_pct": round(float(result.mask.mean()) * 100, 3),
+                "latency_s": round(latency, 3),
+                "bbox_norm": [
+                    grounding.bbox.x1,
+                    grounding.bbox.y1,
+                    grounding.bbox.x2,
+                    grounding.bbox.y2,
+                ],
+                "rationale": grounding.rationale,
+                "live": BASELINE_LIVE,
+            }
+        except Exception as e:
+            payload["baseline_error"] = f"{type(e).__name__}: {e}"
+    else:
+        payload["baseline_skipped"] = True
 
     if trained_mask is not None and result is not None:
         payload["agreement_iou"] = round(iou(trained_mask, result.mask), 4)

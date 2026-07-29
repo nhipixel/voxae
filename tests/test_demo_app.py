@@ -168,6 +168,29 @@ def test_api_survives_a_failing_baseline(monkeypatch):
     assert payload["agreement_iou"] is None  # nothing to agree with
 
 
+def test_api_can_skip_the_baseline(monkeypatch):
+    """The bridge answers in about a second; the baseline need not be waited on."""
+    called = []
+
+    class _CountingBaseline(_BrokenBaseline):
+        def run(self, image, query):
+            called.append(query)
+            raise AssertionError("baseline must not run when it is skipped")
+
+    monkeypatch.setattr(gradio_app, "BASELINE", _CountingBaseline())
+    monkeypatch.setattr(gradio_app, "TRAINED", _FakeTrained())
+
+    payload = gradio_app.api_predict(
+        Image.new("RGB", (48, 32), (40, 60, 40)), "anything", include_baseline=False
+    )
+
+    assert called == []
+    assert payload["baseline"] is None
+    assert payload["baseline_skipped"] is True
+    assert "baseline_error" not in payload
+    assert payload["trained"]["area_pct"] > 0
+
+
 def test_comparison_survives_a_failing_baseline(monkeypatch):
     monkeypatch.setattr(gradio_app, "BASELINE", _BrokenBaseline())
     monkeypatch.setattr(gradio_app, "TRAINED", _FakeTrained())
