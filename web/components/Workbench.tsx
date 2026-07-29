@@ -421,7 +421,15 @@ export default function Workbench() {
             <Cell label="Bridge agreement" value={shownIou?.toFixed(3) ?? "not surveyed"} big />
             <Cell
               label="Baseline agreement"
-              value={gt?.baseline_iou != null ? gt.baseline_iou.toFixed(3) : "not surveyed"}
+              // Null for two different reasons: no annotated answer to score
+              // against, or the baseline never produced one to score.
+              value={
+                gt?.baseline_iou != null
+                  ? gt.baseline_iou.toFixed(3)
+                  : gt
+                    ? "did not run"
+                    : "not surveyed"
+              }
               big
             />
             <Cell
