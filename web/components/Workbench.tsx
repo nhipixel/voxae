@@ -354,8 +354,9 @@ export default function Workbench() {
             <button
               type="button"
               onClick={() => uploadRef.current?.click()}
-              className="sheet-label mt-2 w-full border border-neat py-2 transition hover:border-ink hover:!text-ink"
+              className="sheet-label mt-2 flex w-full items-center justify-center gap-2 border border-neat py-2 transition hover:border-ink hover:!text-ink"
             >
+              <IconUpload />
               Upload image
             </button>
             <input
@@ -510,19 +511,21 @@ export default function Workbench() {
         <section className="mt-8">
           <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
             <h2 className="sheet-label">Reading</h2>
-            <div className="flex items-baseline gap-5">
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 onClick={exportReading}
-                className="sheet-label underline underline-offset-4 transition hover:!text-ink"
+                className="sheet-label flex items-center gap-2 border border-neat px-3 py-1.5 transition hover:border-ink hover:!text-ink"
               >
+                <IconDownload />
                 Export reading
               </button>
               <button
                 type="button"
                 onClick={exportSheet}
-                className="sheet-label underline underline-offset-4 transition hover:!text-ink"
+                className="sheet-label flex items-center gap-2 border border-neat px-3 py-1.5 transition hover:border-ink hover:!text-ink"
               >
+                <IconDownload />
                 Export sheet
               </button>
               <span className="sheet-label">{gt ? `${gt.family} question` : "not surveyed"}</span>
@@ -678,5 +681,37 @@ function Detail({
         <p className="mt-2 text-xs leading-relaxed text-faint">{caption}</p>
       </figcaption>
     </figure>
+  );
+}
+
+/** Hairline glyphs, stroked in the current colour so they inherit button state. */
+const GLYPH = {
+  width: 13,
+  height: 13,
+  viewBox: "0 0 16 16",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.4,
+  strokeLinecap: "round" as const,
+  strokeLinejoin: "round" as const,
+  "aria-hidden": true,
+};
+
+function IconUpload() {
+  return (
+    <svg {...GLYPH}>
+      <path d="M8 10.5V2.5M8 2.5 5.2 5.3M8 2.5l2.8 2.8" />
+      <path d="M2.5 10.5v3h11v-3" />
+    </svg>
+  );
+}
+
+/** The upload glyph with its arrow reversed, so the pair reads as one set. */
+function IconDownload() {
+  return (
+    <svg {...GLYPH}>
+      <path d="M8 2.5v8M8 10.5 5.2 7.7M8 10.5l2.8-2.8" />
+      <path d="M2.5 10.5v3h11v-3" />
+    </svg>
   );
 }
