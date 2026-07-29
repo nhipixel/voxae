@@ -27,9 +27,11 @@ const LAYERS: { key: LayerKey; name: string; note: string; swatch: string }[] = 
   { key: "ground_truth", name: "Surveyed answer", note: "outline only", swatch: SHEET.hydro },
 ];
 
-// A cold call runs about 20 s and a warm one about 8 s. The bar is paced
-// against that rather than pretending to know real progress.
-const EXPECTED_S = 22;
+// The bridge answers in about a second once the GPU is allocated; the baseline
+// waits on a hosted model that has been taking far longer. The bar is paced
+// against each rather than pretending to know real progress.
+const EXPECTED_BRIDGE_S = 8;
+const EXPECTED_BASELINE_S = 45;
 
 function prefersStill() {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -44,6 +46,7 @@ export default function Workbench() {
 
   const [prediction, setPrediction] = useState<Prediction | null>(null);
   const [pending, setPending] = useState(false);
+  const [comparing, setComparing] = useState(false);
   const [waited, setWaited] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState<number | null>(null);
@@ -183,46 +186,53 @@ export default function Workbench() {
     setError(null);
   };
 
-  const read = useCallback(async () => {
-    if (pending || !query.trim()) return;
-    setPending(true);
-    setError(null);
-    setPrediction(null);
-    const started = performance.now();
+  const read = useCallback(
+    async (withBaseline = false) => {
+      if (pending || !query.trim()) return;
+      setPending(true);
+      setComparing(withBaseline);
+      setError(null);
+      if (!withBaseline) setPrediction(null);
+      const started = performance.now();
 
-    try {
-      // Fetch examples too, so uploads and examples take one path.
-      const payload = blob ?? (await (await fetch(imageUrl)).blob());
-      const form = new FormData();
-      form.append("image", new File([payload], filename, { type: payload.type || "image/png" }));
-      form.append("query", query.trim());
-
-      const res = await fetch("/api/segment", { method: "POST", body: form });
-      // A platform level failure answers in plain text, so parsing blind turns
-      // a readable problem into a syntax error.
-      const raw = await res.text();
-      let body: Prediction & { error?: string };
       try {
-        body = JSON.parse(raw);
-      } catch {
-        throw new Error(
-          res.status === 504 || res.status === 502
-            ? "The model did not answer in time. It sleeps when idle, so the first request after a quiet spell can time out. Try again."
-            : `The server returned an unexpected response (${res.status}).`,
-        );
-      }
-      if (!res.ok) throw new Error(body?.error ?? `The request failed (${res.status}).`);
+        // Fetch examples too, so uploads and examples take one path.
+        const payload = blob ?? (await (await fetch(imageUrl)).blob());
+        const form = new FormData();
+        form.append("image", new File([payload], filename, { type: payload.type || "image/png" }));
+        form.append("query", query.trim());
+        if (withBaseline) form.append("baseline", "1");
 
-      const result = body as Prediction;
-      setPrediction(result);
-      setElapsed((performance.now() - started) / 1000);
-      floodTo(result.trained?.threshold ?? 0.5);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "The request did not complete.");
-    } finally {
-      setPending(false);
-    }
-  }, [blob, filename, floodTo, imageUrl, pending, query]);
+        const res = await fetch("/api/segment", { method: "POST", body: form });
+        // A platform level failure answers in plain text, so parsing blind
+        // turns a readable problem into a syntax error.
+        const raw = await res.text();
+        let body: Prediction & { error?: string };
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          throw new Error(
+            res.status === 504 || res.status === 502
+              ? "The model did not answer in time. Try again."
+              : `The server returned an unexpected response (${res.status}).`,
+          );
+        }
+        if (!res.ok) throw new Error(body?.error ?? `The request failed (${res.status}).`);
+
+        const result = body as Prediction;
+        setPrediction(result);
+        setElapsed((performance.now() - started) / 1000);
+        if (!withBaseline) floodTo(result.trained?.threshold ?? 0.5);
+        if (withBaseline) setLayers((l) => ({ ...l, baseline: true }));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "The request did not complete.");
+      } finally {
+        setPending(false);
+        setComparing(false);
+      }
+    },
+    [blob, filename, floodTo, imageUrl, pending, query],
+  );
 
   const trained = prediction?.trained;
   const baseline = prediction?.baseline;
@@ -230,7 +240,10 @@ export default function Workbench() {
   // Prefer the locally recomputed values; they track the waterline.
   const shownIou = reading.iou ?? gt?.trained_iou ?? null;
   const shownArea = reading.areaPct ?? trained?.area_pct ?? null;
-  const progress = Math.min(0.94, waited / EXPECTED_S);
+  const progress = Math.min(
+    0.94,
+    waited / (comparing ? EXPECTED_BASELINE_S : EXPECTED_BRIDGE_S),
+  );
 
   return (
     <>
@@ -321,12 +334,23 @@ export default function Workbench() {
             />
             <button
               type="button"
-              onClick={read}
+              onClick={() => read(false)}
               disabled={pending || !query.trim()}
               className="sheet-label mt-2 w-full bg-ink py-3 !text-linen transition disabled:opacity-40"
             >
-              {pending ? "Reading the scene" : "Read the scene"}
+              {pending && !comparing ? "Reading the scene" : "Read the scene"}
             </button>
+
+            {prediction && !baseline && (
+              <button
+                type="button"
+                onClick={() => read(true)}
+                disabled={pending}
+                className="sheet-label mt-2 w-full border border-neat py-2.5 transition hover:border-ink hover:!text-ink disabled:opacity-40"
+              >
+                {comparing ? "Asking the baseline" : "Compare against zero-shot"}
+              </button>
+            )}
 
             {pending && (
               <div className="mt-3" role="status" aria-live="polite">
@@ -338,11 +362,11 @@ export default function Workbench() {
                 </div>
                 <p className="datum mt-1.5 flex justify-between gap-2 text-[11px] text-faint">
                   <span>
-                    {waited < 6
-                      ? "Sending the photograph"
-                      : waited < 14
-                        ? "The bridge is reading it"
-                        : "Waiting on the baseline"}
+                    {comparing
+                      ? "The baseline calls a hosted model, which is slow"
+                      : waited < 4
+                        ? "Sending the photograph"
+                        : "The bridge is reading it"}
                   </span>
                   <span>{waited.toFixed(1)} s</span>
                 </p>
@@ -433,14 +457,17 @@ export default function Workbench() {
             <Cell label="Bridge agreement" value={shownIou?.toFixed(3) ?? "not surveyed"} big />
             <Cell
               label="Baseline agreement"
-              // Null for two different reasons: no annotated answer to score
-              // against, or the baseline never produced one to score.
+              // Null for three different reasons: nobody asked for the
+              // baseline, it was asked and failed, or there is no annotated
+              // answer to score anything against.
               value={
                 gt?.baseline_iou != null
                   ? gt.baseline_iou.toFixed(3)
-                  : gt
-                    ? "did not run"
-                    : "not surveyed"
+                  : prediction.baseline_skipped
+                    ? "not compared"
+                    : gt
+                      ? "did not run"
+                      : "not surveyed"
               }
               big
             />
@@ -452,7 +479,13 @@ export default function Workbench() {
             <Cell label="Bridge took" value={trained ? `${trained.latency_s.toFixed(2)} s` : "-"} />
             <Cell
               label="Baseline took"
-              value={baseline ? `${baseline.latency_s.toFixed(2)} s` : "did not run"}
+              value={
+                baseline
+                  ? `${baseline.latency_s.toFixed(2)} s`
+                  : prediction.baseline_skipped
+                    ? "not compared"
+                    : "did not run"
+              }
             />
             <Cell label="Round trip" value={elapsed != null ? `${elapsed.toFixed(1)} s` : "-"} />
           </dl>
@@ -503,7 +536,9 @@ export default function Workbench() {
               caption={
                 baseline?.rationale
                   ? `Asks a hosted model for a box, then segments inside it. It looked for: ${baseline.rationale}`
-                  : "Asks a hosted model for a box, then segments inside it. It did not answer this time."
+                  : prediction.baseline_skipped
+                    ? "Asks a hosted model for a box, then segments inside it. Run the comparison to fill this in; it takes far longer than the bridge, which is the point."
+                    : "Asks a hosted model for a box, then segments inside it. It did not answer this time."
               }
               base={base}
               layers={[hatchLayer]}

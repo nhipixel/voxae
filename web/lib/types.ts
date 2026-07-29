@@ -40,6 +40,8 @@ export type Prediction = {
   agreement_iou: number | null;
   /** Present when the third-party grounding API failed but the bridge did not. */
   baseline_error?: string;
+  /** Present when the caller asked for the bridge alone. */
+  baseline_skipped?: boolean;
 };
 
 export type LayerKey = "trained" | "baseline" | "ground_truth";

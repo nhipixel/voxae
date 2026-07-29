@@ -103,15 +103,16 @@ export async function predict(
   query: string,
   signal?: AbortSignal,
   threshold: number = DEFAULT_THRESHOLD,
+  includeBaseline = true,
 ): Promise<Prediction> {
   const path = await upload(image, filename);
 
   const started = await fetch(`${BASE}/gradio_api/call/predict`, {
     method: "POST",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
-    // All three values are required; omitting threshold fails with a null error.
+    // Every value is required; omitting one fails with a null error message.
     body: JSON.stringify({
-      data: [{ path, meta: { _type: "gradio.FileData" } }, query, threshold],
+      data: [{ path, meta: { _type: "gradio.FileData" } }, query, threshold, includeBaseline],
     }),
     signal,
   });

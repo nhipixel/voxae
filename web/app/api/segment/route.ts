@@ -43,6 +43,9 @@ export async function POST(request: Request) {
 
   const image = form.get("image");
   const query = String(form.get("query") ?? "").trim();
+  // Opt in, because the baseline calls a hosted model that has been taking
+  // tens of seconds and would otherwise decide how fast the demo feels.
+  const includeBaseline = String(form.get("baseline") ?? "") === "1";
 
   if (!(image instanceof File)) {
     return NextResponse.json({ error: "No image provided." }, { status: 400 });
@@ -71,7 +74,14 @@ export async function POST(request: Request) {
 
   try {
     const signal = AbortSignal.any([request.signal, deadline.signal]);
-    const result = await predict(image, image.name || "upload.png", query, signal);
+    const result = await predict(
+      image,
+      image.name || "upload.png",
+      query,
+      signal,
+      undefined,
+      includeBaseline,
+    );
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof SpaceError) {
