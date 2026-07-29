@@ -1,0 +1,30 @@
+{
+  "name": "voxae-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "^16.2.12",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "comment": "postcss and sharp are pulled in by next; both advisories are fixed upstream but next has not moved its floor yet. Overriding beats npm audit fix, which proposes next@9.",
+  "overrides": {
+    "postcss": "^8.5.18",
+    "sharp": "^0.35.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.13",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "tailwindcss": "^4.1.13",
+    "typescript": "^5.7.0"
+  }
+}
