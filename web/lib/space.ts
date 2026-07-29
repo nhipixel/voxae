@@ -123,17 +123,3 @@ export async function predict(
 
   return awaitResult(eventId, signal);
 }
-
-/** Whether the Space is awake, so the UI can warn about a cold start. */
-export async function spaceStage(): Promise<string> {
-  try {
-    const res = await fetch(`https://huggingface.co/api/spaces/nhibuilds/voxae/runtime`, {
-      headers: authHeaders(),
-      next: { revalidate: 30 },
-    });
-    if (!res.ok) return "unknown";
-    return ((await res.json()) as { stage?: string }).stage ?? "unknown";
-  } catch {
-    return "unknown";
-  }
-}

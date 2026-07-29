@@ -4,7 +4,10 @@ import { predict, SpaceError } from "@/lib/space";
 
 // Node rather than Edge, so the SSE read is not cut short.
 export const runtime = "nodejs";
-export const maxDuration = 120;
+// Fits inside a Hobby plan's ceiling. The upstream worst case is bounded by
+// VOXAE_VLM_TIMEOUT_S and VOXAE_VLM_MAX_RETRIES on the Space, which have to be
+// set low enough that a slow grounding call cannot outlast this.
+export const maxDuration = 60;
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const ACCEPTED = new Set(["image/png", "image/jpeg", "image/webp"]);
