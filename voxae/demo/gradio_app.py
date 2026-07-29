@@ -252,7 +252,7 @@ def run_comparison(image: Image.Image | None, query: str, progress=_PROGRESS):
 
     trained_overlay = None
     if TRAINED is not None:
-        progress(0.1, desc="Trained bridge: one forward pass")
+        progress(0.1, desc="Trained bridge")
         t0 = time.perf_counter()
         try:
             logits = TRAINED.predict_logits(image, query)
@@ -274,7 +274,7 @@ def run_comparison(image: Image.Image | None, query: str, progress=_PROGRESS):
             lines.append(f"**Trained bridge** &middot; failed: {e}")
             trace["trained"] = {"error": str(e)}
 
-    progress(0.45, desc="Baseline: asking a hosted VLM for a box")
+    progress(0.45, desc="Zero-shot baseline")
     baseline_overlay = None
     result = None
     t0 = time.perf_counter()
