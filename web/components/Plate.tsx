@@ -10,11 +10,20 @@ type Props = {
   /** Lets the reader press and hold to see the photograph underneath. */
   liftable?: boolean;
   className?: string;
+  /** Hands the drawn canvas back, so the sheet can be saved as it appears. */
+  canvasRef?: React.RefObject<HTMLCanvasElement | null>;
 };
 
 /** One photograph with overlays printed on top, drawn at the image's own size. */
-export default function Plate({ base, layers, liftable = false, className = "" }: Props) {
-  const ref = useRef<HTMLCanvasElement>(null);
+export default function Plate({
+  base,
+  layers,
+  liftable = false,
+  className = "",
+  canvasRef,
+}: Props) {
+  const own = useRef<HTMLCanvasElement>(null);
+  const ref = canvasRef ?? own;
   const [lifted, setLifted] = useState(false);
 
   useEffect(() => {

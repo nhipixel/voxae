@@ -59,6 +59,7 @@ export default function Workbench() {
   const uploadRef = useRef<HTMLInputElement>(null);
   const objectUrl = useRef<string | null>(null);
   const flood = useRef<number | null>(null);
+  const sheetRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(
     () => () => {
@@ -234,6 +235,65 @@ export default function Workbench() {
     [blob, filename, floodTo, imageUrl, pending, query],
   );
 
+  const stem = () => {
+    const id = prediction?.ground_truth?.sample_id;
+    return id ?? (blob ? filename.replace(/\.[^.]+$/, "") : "voxae");
+  };
+
+  const save = (blob: Blob, name: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  /** The reading as it stands, including what the waterline currently implies. */
+  const exportReading = () => {
+    if (!prediction) return;
+    const record = {
+      query: prediction.query,
+      image: prediction.image,
+      waterline,
+      bridge: prediction.trained && {
+        model: prediction.trained.model,
+        latency_s: prediction.trained.latency_s,
+        server_threshold: prediction.trained.threshold,
+        area_pct_at_waterline: reading.areaPct,
+        agreement_at_waterline: reading.iou,
+        mean_confidence_in_mask: prediction.trained.mean_confidence_in_mask,
+      },
+      baseline: prediction.baseline && {
+        model: prediction.baseline.model,
+        latency_s: prediction.baseline.latency_s,
+        area_pct: prediction.baseline.area_pct,
+        bbox_norm: prediction.baseline.bbox_norm,
+        rationale: prediction.baseline.rationale,
+        live: prediction.baseline.live,
+      },
+      baseline_skipped: prediction.baseline_skipped ?? false,
+      baseline_error: prediction.baseline_error ?? null,
+      ground_truth: prediction.ground_truth && {
+        sample_id: prediction.ground_truth.sample_id,
+        family: prediction.ground_truth.family,
+        bridge_iou_at_server_threshold: prediction.ground_truth.trained_iou,
+        baseline_iou: prediction.ground_truth.baseline_iou,
+      },
+      agreement_between_predictors: prediction.agreement_iou,
+      round_trip_s: elapsed,
+    };
+    save(
+      new Blob([JSON.stringify(record, null, 2)], { type: "application/json" }),
+      `${stem()}-reading.json`,
+    );
+  };
+
+  /** The sheet exactly as drawn, overlays and waterline included. */
+  const exportSheet = () => {
+    sheetRef.current?.toBlob((b) => b && save(b, `${stem()}-sheet.png`), "image/png");
+  };
+
   const trained = prediction?.trained;
   const baseline = prediction?.baseline;
   const gt = prediction?.ground_truth;
@@ -251,7 +311,7 @@ export default function Workbench() {
       <div className="grid gap-x-9 gap-y-6 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <figure className="m-0">
           <div className="border border-ink/25 bg-mylar">
-            <Plate base={base} layers={mainLayers} liftable />
+            <Plate base={base} layers={mainLayers} liftable canvasRef={sheetRef} />
           </div>
           <figcaption className="sheet-label mt-2 flex justify-between">
             <span>{prediction ? "Hold the sheet to lift the overlay" : "Nothing drawn yet"}</span>
@@ -448,13 +508,29 @@ export default function Workbench() {
 
       {prediction && (
         <section className="mt-8">
-          <div className="flex items-baseline justify-between">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
             <h2 className="sheet-label">Reading</h2>
-            <span className="sheet-label">{gt ? `${gt.family} question` : "not surveyed"}</span>
+            <div className="flex items-baseline gap-5">
+              <button
+                type="button"
+                onClick={exportReading}
+                className="sheet-label underline underline-offset-4 transition hover:!text-ink"
+              >
+                Export reading
+              </button>
+              <button
+                type="button"
+                onClick={exportSheet}
+                className="sheet-label underline underline-offset-4 transition hover:!text-ink"
+              >
+                Export sheet
+              </button>
+              <span className="sheet-label">{gt ? `${gt.family} question` : "not surveyed"}</span>
+            </div>
           </div>
           <div className="mt-2 h-px bg-neat" />
           <dl className="datum mt-4 grid grid-cols-2 gap-x-8 gap-y-5 sm:grid-cols-3 lg:grid-cols-6">
-            <Cell label="Bridge agreement" value={shownIou?.toFixed(3) ?? "not surveyed"} big />
+            <Cell label="Bridge agreement" value={shownIou?.toFixed(3) ?? "not surveyed"} />
             <Cell
               label="Baseline agreement"
               // Null for three different reasons: nobody asked for the
@@ -469,12 +545,10 @@ export default function Workbench() {
                       ? "did not run"
                       : "not surveyed"
               }
-              big
             />
             <Cell
               label="Ground above water"
               value={shownArea != null ? `${shownArea.toFixed(1)}%` : "-"}
-              big
             />
             <Cell label="Bridge took" value={trained ? `${trained.latency_s.toFixed(2)} s` : "-"} />
             <Cell
@@ -564,11 +638,11 @@ export default function Workbench() {
   );
 }
 
-function Cell({ label, value, big }: { label: string; value: string; big?: boolean }) {
+function Cell({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <dt className="sheet-label !text-[10px]">{label}</dt>
-      <dd className={big ? "mt-1 text-2xl" : "mt-1 text-sm"}>{value}</dd>
+      <dd className="mt-1 text-xl">{value}</dd>
     </div>
   );
 }
