@@ -1,0 +1,135 @@
+@import "tailwindcss";
+
+@theme {
+  /* A survey sheet, not paper stock: cool drafting linen rather than cream. */
+  --color-linen: #dce0d8;
+  --color-mylar: #c7cdc3;
+  --color-neat: #a9b1a5;
+  --color-ink: #22282a;
+  --color-faint: #5f6a64;
+
+  /* Map convention, so each layer's colour states its role: brown is relief,
+     blue is surveyed reference, red is a revision overprint. */
+  --color-contour: #7a5b2e;
+  --color-hydro: #2c6b8a;
+  --color-revision: #8e3a26;
+
+  --font-display: var(--font-display), ui-sans-serif, sans-serif;
+  --font-body: var(--font-body), ui-sans-serif, sans-serif;
+  --font-data: var(--font-data), ui-monospace, monospace;
+}
+
+html {
+  background: var(--color-linen);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Drafting grid. Low enough contrast to read as sheet texture, not decoration. */
+body {
+  min-height: 100vh;
+  background-image:
+    linear-gradient(to right, rgba(34, 40, 42, 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(34, 40, 42, 0.045) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.sheet-title {
+  font-family: var(--font-display);
+  font-variation-settings: "wdth" 125;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.sheet-label {
+  font-family: var(--font-display);
+  font-variation-settings: "wdth" 112;
+  font-weight: 600;
+  font-size: 0.625rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+
+.datum {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Sea level control. Styled as a gauge rather than a generic slider, because
+   it reports a waterline. */
+.gauge {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  background: transparent;
+  cursor: ew-resize;
+}
+.gauge::-webkit-slider-runnable-track {
+  height: 3px;
+  background: linear-gradient(to right, var(--color-hydro), var(--color-contour));
+}
+.gauge::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 20px;
+  width: 6px;
+  margin-top: -8px;
+  border-radius: 1px;
+  background: var(--color-ink);
+}
+.gauge::-moz-range-track {
+  height: 3px;
+  background: linear-gradient(to right, var(--color-hydro), var(--color-contour));
+}
+.gauge::-moz-range-thumb {
+  height: 20px;
+  width: 6px;
+  border: none;
+  border-radius: 1px;
+  background: var(--color-ink);
+}
+.gauge:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--color-hydro);
+  outline-offset: 2px;
+}
+
+:where(a, button, textarea, input, summary):focus-visible {
+  outline: 2px solid var(--color-hydro);
+  outline-offset: 2px;
+}
+
+/* Page load: the neatline is ruled first, then the sheet fills. */
+@keyframes rule-in {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@keyframes settle {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rule-in {
+  transform-origin: left;
+  animation: rule-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.settle {
+  animation: settle 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rule-in,
+  .settle {
+    animation: none;
+  }
+}
