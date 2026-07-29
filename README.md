@@ -9,7 +9,7 @@ A perception primitive for embodied agents (drones, robots, autonomous systems),
 [![CI](https://github.com/nhipixel/voxae/actions/workflows/ci.yml/badge.svg)](https://github.com/nhipixel/voxae/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-**[Try it](https://huggingface.co/spaces/nhibuilds/voxae).** Both models run on the same query, side by side.
+**Try it: **[Hugging Face](https://huggingface.co/spaces/nhibuilds/voxae)**, **[Voxae App](https://voxae.vercel.app/).****
 
 ![Voxae demo](assets/demo_v1.gif)
 
