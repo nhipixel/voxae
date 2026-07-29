@@ -63,8 +63,15 @@ export async function POST(request: Request) {
     );
   }
 
+  // Give up before the platform does. Overrunning maxDuration kills the
+  // function and returns a plain text crash page, which a client parsing JSON
+  // cannot report usefully.
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), (maxDuration - 8) * 1000);
+
   try {
-    const result = await predict(image, image.name || "upload.png", query, request.signal);
+    const signal = AbortSignal.any([request.signal, deadline.signal]);
+    const result = await predict(image, image.name || "upload.png", query, signal);
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof SpaceError) {
@@ -74,9 +81,21 @@ export async function POST(request: Request) {
           : error.message;
       return NextResponse.json({ error: message, kind: error.kind }, { status: error.status });
     }
+    if (deadline.signal.aborted) {
+      return NextResponse.json(
+        {
+          error:
+            "The model was still waking up. It sleeps when idle and takes about a minute to start. Try again and it should answer quickly.",
+          kind: "waking",
+        },
+        { status: 504 },
+      );
+    }
     if (error instanceof Error && error.name === "AbortError") {
       return NextResponse.json({ error: "Cancelled." }, { status: 499 });
     }
     return NextResponse.json({ error: "The model backend did not respond." }, { status: 502 });
+  } finally {
+    clearTimeout(timer);
   }
 }

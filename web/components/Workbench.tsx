@@ -198,7 +198,19 @@ export default function Workbench() {
       form.append("query", query.trim());
 
       const res = await fetch("/api/segment", { method: "POST", body: form });
-      const body = await res.json();
+      // A platform level failure answers in plain text, so parsing blind turns
+      // a readable problem into a syntax error.
+      const raw = await res.text();
+      let body: Prediction & { error?: string };
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        throw new Error(
+          res.status === 504 || res.status === 502
+            ? "The model did not answer in time. It sleeps when idle, so the first request after a quiet spell can time out. Try again."
+            : `The server returned an unexpected response (${res.status}).`,
+        );
+      }
       if (!res.ok) throw new Error(body?.error ?? `The request failed (${res.status}).`);
 
       const result = body as Prediction;
