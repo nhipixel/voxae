@@ -23,10 +23,24 @@ const data = IBM_Plex_Mono({
   display: "swap",
 });
 
+const SITE =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : "http://localhost:3000");
+
+const TITLE = "Voxae — read a scene by asking it a question";
+const DESCRIPTION =
+  "Ask an aerial scene a question in plain language and get back the region that answers it. The model's confidence is drawn as terrain, and you set the waterline.";
+
 export const metadata: Metadata = {
-  title: "Voxae — read a scene by asking it a question",
-  description:
-    "Ask an aerial scene a question in plain language and get back the region that answers it. The model's confidence is drawn as terrain, and you set the waterline.",
+  // Without this the generated card resolves against a relative path and no
+  // link preview renders.
+  metadataBase: new URL(SITE),
+  title: TITLE,
+  description: DESCRIPTION,
+  openGraph: { title: TITLE, description: DESCRIPTION, type: "website", url: SITE },
+  twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
