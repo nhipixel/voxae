@@ -25,7 +25,7 @@ export type ViewState = {
 export const HOME_VIEW: Omit<ViewState, "waterline"> = {
   yaw: -0.24,
   pitch: 1.0,
-  zoom: 1.0,
+  zoom: 1.85,
 };
 
 const HEIGHT_SCALE = 0.17;

@@ -10,8 +10,8 @@
 export type Raster = { data: Uint8ClampedArray; width: number; height: number };
 
 /** Decodes a data URI into raw pixels via an offscreen canvas. */
-export async function decode(dataUri: string): Promise<Raster> {
-  const bitmap = await createImageBitmap(await (await fetch(dataUri)).blob());
+export async function decode(dataUri: string, init?: RequestInit): Promise<Raster> {
+  const bitmap = await createImageBitmap(await (await fetch(dataUri, init)).blob());
   const canvas = document.createElement("canvas");
   canvas.width = bitmap.width;
   canvas.height = bitmap.height;

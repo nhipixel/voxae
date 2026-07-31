@@ -280,8 +280,8 @@ export default function TerrainView({
       e.preventDefault();
       interacted.current = true;
       view.current.zoom = Math.min(
-        1.9,
-        Math.max(0.75, view.current.zoom * (e.deltaY < 0 ? 1.08 : 0.93)),
+        4.5,
+        Math.max(0.75, view.current.zoom * (e.deltaY < 0 ? 1.09 : 0.92)),
       );
       invalidate();
     };

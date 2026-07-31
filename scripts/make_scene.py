@@ -88,7 +88,10 @@ def main() -> None:
             return fn(np.stack(layers), axis=0)
 
         # Morphological opening kills thin spikes, the median calms speckle,
-        # and a floor drops the low crumple that morphs distant blocks.
+        # and a floor drops the low crumple that morphs distant blocks. Roof
+        # domes from monocular depth stay smooth on purpose: every levelling
+        # scheme tried against them traded smooth walls for striping, and the
+        # back-slope card shading in the renderer already absorbs the domes.
         ndsm = nb(nb(ndsm, np.min), np.max)
         ndsm = nb(ndsm, np.median)
         top = float(np.percentile(ndsm, 99.5))

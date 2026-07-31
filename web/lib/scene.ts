@@ -24,11 +24,12 @@ const SHEAR_GAIN = 0.5;
 
 export async function loadScene(stem: string): Promise<SceneAssets | null> {
   try {
-    const res = await fetch(`/scene/${stem}.json`);
+    const res = await fetch(`/scene/${stem}.json`, { cache: "no-store" });
     if (!res.ok) return null;
     const meta = (await res.json()) as SceneMeta;
     if (typeof meta.shear !== "number") return null;
-    const depth = await decode(`/scene/${stem}-height.png`);
+    // Regenerated offline without a name change, so the cache must not win.
+    const depth = await decode(`/scene/${stem}-height.png`, { cache: "no-store" });
     return { depth, meta };
   } catch {
     return null;
