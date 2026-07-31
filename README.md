@@ -10,7 +10,9 @@ A perception primitive for embodied agents (drones, robots, autonomous systems),
 [![CI](https://github.com/nhipixel/voxae/actions/workflows/ci.yml/badge.svg)](https://github.com/nhipixel/voxae/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-**[Try it](https://voxae.vercel.app).** Ask a scene a question and the bridge answers in about a second,
+## **[Try Voxae](https://voxae.vercel.app).** 
+
+Ask a scene a question and the bridge answers in about a second,
 drawn as terrain: contours mark equal confidence, you set the waterline. Held-out frames are scored
 against the annotation on the spot, and you can put the zero-shot baseline on the same query to see both
 answers together.
