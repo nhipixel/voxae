@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EXAMPLES, type Example } from "@/lib/examples";
+import { loadReading } from "@/lib/readings";
 import type { Raster } from "@/lib/raster";
 import { contours, coverage, decode, hatch, hexToRgb, iouAgainst, neatline, relief } from "@/lib/raster";
 import type { LayerKey, Prediction } from "@/lib/types";
 import Plate from "./Plate";
+import TerrainView from "./TerrainView";
 
 export const SHEET = {
   contour: "#7a5b2e",
@@ -50,6 +52,9 @@ export default function Workbench() {
   const [waited, setWaited] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState<number | null>(null);
+  const [cachedAt, setCachedAt] = useState<string | null>(null);
+  const [sheetMode, setSheetMode] = useState<"relief" | "flat">("relief");
+  const [booting, setBooting] = useState(true);
 
   const [layers, setLayers] = useState(START);
   const [waterline, setWaterline] = useState(0.5);
@@ -167,6 +172,19 @@ export default function Workbench() {
     };
   }, [rasters, waterline]);
 
+  const showCached = useCallback(
+    async (query: string) => {
+      const reading = await loadReading(query);
+      if (!reading) return false;
+      setPrediction(reading.prediction);
+      setCachedAt(reading.captured_at);
+      setElapsed(null);
+      floodTo(reading.prediction.trained?.threshold ?? 0.5);
+      return true;
+    },
+    [floodTo],
+  );
+
   const pickExample = (next: Example) => {
     setExample(next);
     setQuery(next.query);
@@ -174,8 +192,38 @@ export default function Workbench() {
     setFilename(next.image.split("/").pop() ?? "frame.png");
     setBlob(null);
     setPrediction(null);
+    setCachedAt(null);
     setError(null);
+    void showCached(next.query);
   };
+
+  // First impression: the default example's reading, before anything is asked.
+  useEffect(() => {
+    let live = true;
+    void loadReading(EXAMPLES[0].query).then((reading) => {
+      if (!live) return;
+      if (!reading) {
+        setBooting(false);
+        return;
+      }
+      setPrediction((current) => {
+        if (current) return current;
+        setCachedAt(reading.captured_at);
+        floodTo(reading.prediction.trained?.threshold ?? 0.5);
+        return reading.prediction;
+      });
+    });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The boot placeholder holds until the relief is actually drawable, so the
+  // arrival is one reveal instead of three part-loaded states.
+  useEffect(() => {
+    if (rasters.trained || error) setBooting(false);
+  }, [rasters.trained, error]);
 
   const pickUpload = (file: File) => {
     if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
@@ -192,6 +240,7 @@ export default function Workbench() {
       if (pending || !query.trim()) return;
       setPending(true);
       setComparing(withBaseline);
+      setCachedAt(null);
       setError(null);
       if (!withBaseline) setPrediction(null);
       const started = performance.now();
@@ -295,6 +344,7 @@ export default function Workbench() {
   };
 
   const trained = prediction?.trained;
+  const showRelief = sheetMode === "relief" && Boolean(prediction?.trained && rasters.trained);
   const baseline = prediction?.baseline;
   const gt = prediction?.ground_truth;
   // Prefer the locally recomputed values; they track the waterline.
@@ -310,11 +360,74 @@ export default function Workbench() {
       {/* The sheet and the things you ask it, side by side. */}
       <div className="grid gap-x-9 gap-y-6 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <figure className="m-0">
-          <div className="border border-ink/25 bg-mylar">
-            <Plate base={base} layers={mainLayers} liftable canvasRef={sheetRef} />
+          {prediction && (
+            <div className="mb-2 flex items-center justify-between">
+              <div className="flex gap-1">
+                {(
+                  [
+                    ["relief", "Relief model"],
+                    ["flat", "Flat sheet"],
+                  ] as const
+                ).map(([mode, name]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    aria-pressed={sheetMode === mode}
+                    onClick={() => setSheetMode(mode)}
+                    className={`sheet-label border px-2.5 py-1 transition ${
+                      sheetMode === mode
+                        ? "border-ink !text-ink"
+                        : "border-transparent hover:border-neat"
+                    }`}
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
+              {cachedAt && (
+                <span className="sheet-label border border-neat px-2 py-0.5">
+                  Cached, {cachedAt}
+                </span>
+              )}
+            </div>
+          )}
+
+          <div className="relative border border-ink/25 bg-mylar">
+            {/* The flat plate stays mounted underneath: it is the export
+                surface and the fallback when WebGL is unavailable. */}
+            <div className={showRelief || booting ? "invisible" : ""}>
+              <Plate base={base} layers={mainLayers} liftable canvasRef={sheetRef} />
+            </div>
+            {booting && (
+              <div className="sweep absolute inset-0 flex items-center justify-center overflow-hidden">
+                <span className="sheet-label">Preparing the survey</span>
+              </div>
+            )}
+            {showRelief && !booting && (
+              <div className="absolute inset-0">
+                <TerrainView
+                  photo={base}
+                  field={rasters.trained ?? null}
+                  waterline={waterline}
+                />
+              </div>
+            )}
+            {showRelief && !booting && (
+              <span className="sheet-label pointer-events-none absolute right-2 top-2 bg-linen/85 px-2 py-0.5">
+                Elevation is confidence
+              </span>
+            )}
           </div>
           <figcaption className="sheet-label mt-2 flex justify-between">
-            <span>{prediction ? "Hold the sheet to lift the overlay" : "Nothing drawn yet"}</span>
+            <span>
+              {showRelief
+                ? "Height is the model’s confidence, not the buildings’. Drag to tilt, scroll to zoom, double click resets"
+                : cachedAt
+                  ? `Cached reading, ${cachedAt}. Read the scene reruns it live`
+                  : prediction
+                    ? "Hold the sheet to lift the overlay"
+                    : "Nothing drawn yet"}
+            </span>
             <span className="datum normal-case tracking-normal">
               {blob ? filename : example.image.includes("000900") ? "Frame A" : "Frame B"}
             </span>
