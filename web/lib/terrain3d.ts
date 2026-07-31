@@ -40,13 +40,21 @@ uniform mediump float uUseDepth;
 uniform float uHScale;
 uniform float uAspect;
 varying vec2 vUv;
-varying float vP;
 void main() {
   vUv = aUv;
-  vP = texture2D(uHeight, aUv).r;
-  float lift = mix(vP, texture2D(uDepth, aUv).r, uUseDepth);
+  float lift = mix(texture2D(uHeight, aUv).r, texture2D(uDepth, aUv).r, uUseDepth);
   vec3 pos = vec3(aUv.x - 0.5, (0.5 - aUv.y) * uAspect, lift * uHScale);
   gl_Position = uMvp * vec4(pos, 1.0);
+}`;
+
+const SCENE_VS = `
+attribute vec2 aUv;
+attribute vec3 aPos;
+uniform mat4 uMvp;
+varying vec2 vUv;
+void main() {
+  vUv = aUv;
+  gl_Position = uMvp * vec4(aPos, 1.0);
 }`;
 
 const TERRAIN_FS = `
@@ -57,14 +65,15 @@ uniform sampler2D uDepth;
 uniform mediump float uUseDepth;
 uniform vec2 uTexel;
 uniform float uWater;
+uniform mediump float uHasField;
 varying vec2 vUv;
-varying float vP;
 
 float lift(vec2 uv) {
   return mix(texture2D(uHeight, uv).r, texture2D(uDepth, uv).r, uUseDepth);
 }
 
 void main() {
+  float vP = texture2D(uHeight, vUv).r;
   float hL = lift(vUv - vec2(uTexel.x, 0.0));
   float hR = lift(vUv + vec2(uTexel.x, 0.0));
   float hT = lift(vUv - vec2(0.0, uTexel.y));
@@ -77,6 +86,12 @@ void main() {
   float light = 0.66 + 0.34 * max(dot(n, normalize(vec3(-0.45, 0.55, 0.7))), 0.0);
 
   vec3 photo = texture2D(uPhoto, vUv).rgb;
+  float back = smoothstep(0.06, 0.22, hB - hT);
+  photo = mix(photo, vec3(0.70, 0.71, 0.66), back * 0.75);
+  if (uHasField < 0.5) {
+    gl_FragColor = vec4(photo * light, 1.0);
+    return;
+  }
   vec3 col;
   if (vP >= uWater) {
     float t = (vP - uWater) / max(1.0 - uWater, 1e-3);
@@ -219,6 +234,7 @@ export function smoothField(field: FieldRaster): FieldRaster {
 export class TerrainRenderer {
   private gl: WebGLRenderingContext;
   private terrain: WebGLProgram;
+  private scene: WebGLProgram;
   private flat: WebGLProgram;
   private photoTex: WebGLTexture;
   private heightTex: WebGLTexture;
@@ -229,6 +245,10 @@ export class TerrainRenderer {
   private skirtBuffer: WebGLBuffer;
   private skirtCount = 0;
   private waterBuffer: WebGLBuffer;
+  private posBuffer: WebGLBuffer;
+  private propBuffer: WebGLBuffer;
+  private scenePositions: Float32Array | null = null;
+  private hasField = false;
   private aspect = 9 / 16;
   private texel: [number, number] = [1 / 256, 1 / 256];
   ready = false;
@@ -243,6 +263,7 @@ export class TerrainRenderer {
     if (!gl) throw new Error("webgl unavailable");
     this.gl = gl;
     this.terrain = program(gl, TERRAIN_VS, TERRAIN_FS);
+    this.scene = program(gl, SCENE_VS, TERRAIN_FS);
     this.flat = program(gl, FLAT_VS, FLAT_FS);
     this.photoTex = gl.createTexture()!;
     this.heightTex = gl.createTexture()!;
@@ -251,6 +272,11 @@ export class TerrainRenderer {
     this.indexBuffer = gl.createBuffer()!;
     this.skirtBuffer = gl.createBuffer()!;
     this.waterBuffer = gl.createBuffer()!;
+    this.posBuffer = gl.createBuffer()!;
+    this.propBuffer = gl.createBuffer()!;
+    const blank = { data: new Uint8ClampedArray([0, 0, 0, 255]), width: 1, height: 1 };
+    this.uploadTexture(this.heightTex, null, blank);
+    this.uploadTexture(this.depthTex, null, blank);
     gl.enable(gl.DEPTH_TEST);
     gl.clearColor(0, 0, 0, 0);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
@@ -281,13 +307,114 @@ export class TerrainRenderer {
   private field: FieldRaster | null = null;
   private depthField: FieldRaster | null = null;
 
-  setField(field: FieldRaster) {
+  setField(field: FieldRaster | null) {
+    this.hasField = field != null;
+    if (!field) {
+      // A 1x1 zero keeps every sampler bound and every branch simple.
+      this.field = null;
+      this.uploadTexture(this.heightTex, null, {
+        data: new Uint8ClampedArray([0, 0, 0, 255]),
+        width: 1,
+        height: 1,
+      });
+      if (this.scenePositions) this.ready = true;
+      return;
+    }
     this.field = field;
     this.uploadTexture(this.heightTex, null, field);
     this.texel = [1 / field.width, 1 / field.height];
-    this.aspect = field.height / field.width;
-    this.buildGeometry();
+    if (!this.scenePositions) {
+      this.aspect = field.height / field.width;
+      this.buildGeometry();
+    }
     this.ready = true;
+  }
+
+  /** True vertex positions from the depth mesh; the sheet becomes a scene. */
+  setScene(positions: Float32Array, gridW: number, gridH: number, depth: FieldRaster) {
+    this.scenePositions = positions;
+    this.depthField = depth;
+    this.uploadTexture(this.depthTex, null, depth);
+    this.texel = [1 / depth.width, 1 / depth.height];
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+    this.buildSceneGrid(gridW, gridH, positions);
+    this.ready = true;
+  }
+
+  /** Animated illustration meshes: interleaved x,y,z,shade triangles. */
+  private propGroups: { count: number; offset: number; color: [number, number, number, number] }[] = [];
+
+  setProps(groups: { data: Float32Array; color: [number, number, number, number] }[] | null) {
+    const gl = this.gl;
+    this.propGroups = [];
+    if (!groups || !groups.length) return;
+    let total = 0;
+    for (const g of groups) total += g.data.length;
+    const packed = new Float32Array(total);
+    let cursor = 0;
+    for (const g of groups) {
+      packed.set(g.data, cursor);
+      this.propGroups.push({ offset: cursor / 4, count: g.data.length / 4, color: g.color });
+      cursor += g.data.length;
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.propBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, packed, gl.DYNAMIC_DRAW);
+  }
+
+  private buildSceneGrid(w: number, h: number, positions: Float32Array) {
+    const gl = this.gl;
+    const uvs = new Float32Array((w + 1) * (h + 1) * 2);
+    let k = 0;
+    for (let y = 0; y <= h; y++) {
+      for (let x = 0; x <= w; x++) {
+        uvs[k++] = x / w;
+        uvs[k++] = y / h;
+      }
+    }
+    const idx = new Uint16Array(w * h * 6);
+    k = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const a = y * (w + 1) + x;
+        const b = a + 1;
+        const c = a + w + 1;
+        const d = c + 1;
+        idx[k++] = a; idx[k++] = c; idx[k++] = b;
+        idx[k++] = b; idx[k++] = c; idx[k++] = d;
+      }
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+    this.indexCount = idx.length;
+
+    // Skirt ring straight from the border vertices, down to a base.
+    const at = (x: number, y: number) => {
+      const i = (y * (w + 1) + x) * 3;
+      return [positions[i], positions[i + 1], positions[i + 2]] as const;
+    };
+    const ring: (readonly [number, number, number])[] = [];
+    for (let x = 0; x <= w; x++) ring.push(at(x, h));
+    for (let y = h - 1; y >= 0; y--) ring.push(at(w, y));
+    for (let x = w - 1; x >= 0; x--) ring.push(at(x, 0));
+    for (let y = 1; y <= h - 1; y++) ring.push(at(0, y));
+    ring.push(ring[0]);
+    const base = -0.05;
+    const skirt: number[] = [];
+    for (let i = 0; i < ring.length - 1; i++) {
+      const [x0, y0, z0] = ring[i];
+      const [x1, y1, z1] = ring[i + 1];
+      skirt.push(
+        x0, y0, z0, 1.0, x0, y0, base, 0.78, x1, y1, z1, 1.0,
+        x1, y1, z1, 1.0, x0, y0, base, 0.78, x1, y1, base, 0.78,
+      );
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.skirtBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(skirt), gl.STATIC_DRAW);
+    this.skirtCount = skirt.length / 4;
   }
 
   /** Real scene structure to stand the photograph up on; null falls back to
@@ -407,34 +534,45 @@ export class TerrainRenderer {
     const canvasAspect = this.canvas.width / Math.max(1, this.canvas.height);
     const mvp = mul4(perspective(0.62, canvasAspect, 0.02, 12), lookAt(eye, target, [0, 0, 1]));
 
-    // Terrain.
-    gl.useProgram(this.terrain);
-    gl.uniformMatrix4fv(gl.getUniformLocation(this.terrain, "uMvp"), false, mvp);
-    gl.uniform1f(
-      gl.getUniformLocation(this.terrain, "uHScale"),
-      this.depthField ? 0.21 : HEIGHT_SCALE,
-    );
-    gl.uniform1f(gl.getUniformLocation(this.terrain, "uAspect"), this.aspect);
-    gl.uniform1f(gl.getUniformLocation(this.terrain, "uWater"), view.waterline);
-    gl.uniform2f(gl.getUniformLocation(this.terrain, "uTexel"), this.texel[0], this.texel[1]);
+    // Terrain: the scene program when true positions exist.
+    const prog = this.scenePositions ? this.scene : this.terrain;
+    gl.useProgram(prog);
+    gl.uniformMatrix4fv(gl.getUniformLocation(prog, "uMvp"), false, mvp);
+    if (!this.scenePositions) {
+      gl.uniform1f(gl.getUniformLocation(prog, "uHScale"), HEIGHT_SCALE);
+      gl.uniform1f(gl.getUniformLocation(prog, "uAspect"), this.aspect);
+      gl.uniform1f(gl.getUniformLocation(prog, "uUseDepth"), 0);
+    }
+    gl.uniform1f(gl.getUniformLocation(prog, "uWater"), view.waterline);
+    gl.uniform1f(gl.getUniformLocation(prog, "uHasField"), this.hasField ? 1 : 0);
+    gl.uniform2f(gl.getUniformLocation(prog, "uTexel"), this.texel[0], this.texel[1]);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.photoTex);
-    gl.uniform1i(gl.getUniformLocation(this.terrain, "uPhoto"), 0);
+    gl.uniform1i(gl.getUniformLocation(prog, "uPhoto"), 0);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.heightTex);
-    gl.uniform1i(gl.getUniformLocation(this.terrain, "uHeight"), 1);
+    gl.uniform1i(gl.getUniformLocation(prog, "uHeight"), 1);
     gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, this.depthTex ?? this.heightTex);
-    gl.uniform1i(gl.getUniformLocation(this.terrain, "uDepth"), 2);
-    gl.uniform1f(gl.getUniformLocation(this.terrain, "uUseDepth"), this.depthField ? 1 : 0);
+    gl.bindTexture(gl.TEXTURE_2D, this.depthTex);
+    gl.uniform1i(gl.getUniformLocation(prog, "uDepth"), 2);
+    // The fragment's lift() feeds normals; in scene mode they come from depth.
+    gl.uniform1f(gl.getUniformLocation(prog, "uUseDepth"), this.depthField ? 1 : 0);
 
-    const aUv = gl.getAttribLocation(this.terrain, "aUv");
+    const aUv = gl.getAttribLocation(prog, "aUv");
     gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuffer);
     gl.enableVertexAttribArray(aUv);
     gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 0, 0);
+    let aScenePos = -1;
+    if (this.scenePositions) {
+      aScenePos = gl.getAttribLocation(prog, "aPos");
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
+      gl.enableVertexAttribArray(aScenePos);
+      gl.vertexAttribPointer(aScenePos, 3, gl.FLOAT, false, 0, 0);
+    }
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
     gl.drawElements(gl.TRIANGLES, this.indexCount, gl.UNSIGNED_SHORT, 0);
     gl.disableVertexAttribArray(aUv);
+    if (aScenePos >= 0) gl.disableVertexAttribArray(aScenePos);
 
     // Skirt.
     gl.useProgram(this.flat);
@@ -451,7 +589,8 @@ export class TerrainRenderer {
 
     // Sea, translucent, at the waterline's elevation. Over real structure the
     // waterline is a colour cut, not a physical plane, so the sea stays home.
-    if (this.depthField) {
+    if (this.depthField || this.scenePositions) {
+      this.drawProps(mvp, aPos, aShade);
       gl.disableVertexAttribArray(aPos);
       gl.disableVertexAttribArray(aShade);
       return;
@@ -471,8 +610,35 @@ export class TerrainRenderer {
     gl.drawArrays(gl.TRIANGLES, 0, 6);
     gl.depthMask(true);
     gl.disable(gl.BLEND);
+    this.drawProps(mvp, aPos, aShade);
     gl.disableVertexAttribArray(aPos);
     gl.disableVertexAttribArray(aShade);
+  }
+
+  private drawProps(mvp: Mat4, aPos: number, aShade: number) {
+    if (!this.propGroups.length) return;
+    const gl = this.gl;
+    gl.useProgram(this.flat);
+    gl.uniformMatrix4fv(gl.getUniformLocation(this.flat, "uMvp"), false, mvp);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.propBuffer);
+    gl.enableVertexAttribArray(aPos);
+    gl.enableVertexAttribArray(aShade);
+    gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 16, 0);
+    gl.vertexAttribPointer(aShade, 1, gl.FLOAT, false, 16, 12);
+    for (const g of this.propGroups) {
+      const [r, gr, b, a] = g.color;
+      if (a < 1) {
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.depthMask(false);
+      }
+      gl.uniform4f(gl.getUniformLocation(this.flat, "uColor"), r, gr, b, a);
+      gl.drawArrays(gl.TRIANGLES, g.offset, g.count);
+      if (a < 1) {
+        gl.depthMask(true);
+        gl.disable(gl.BLEND);
+      }
+    }
   }
 
   private lastWater = -1;
@@ -505,6 +671,8 @@ export class TerrainRenderer {
     gl.deleteBuffer(this.indexBuffer);
     gl.deleteBuffer(this.skirtBuffer);
     gl.deleteBuffer(this.waterBuffer);
+    gl.deleteBuffer(this.posBuffer);
+    gl.deleteBuffer(this.propBuffer);
     this.ready = false;
   }
 }

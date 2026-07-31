@@ -2,18 +2,26 @@
 
 import { useCallback, useEffect, useRef } from "react";
 
+import { buildProps, type PropKind } from "@/lib/props";
+import type { SceneAssets, SceneGeometry } from "@/lib/scene";
+import { buildSceneGeometry } from "@/lib/scene";
 import type { FieldRaster } from "@/lib/terrain3d";
 import { HOME_VIEW, TerrainRenderer, smoothField } from "@/lib/terrain3d";
 
+export type ScenePropSpec = { kind: PropKind; anchors: [number, number][] } | null;
+
 type Props = {
   photo: HTMLImageElement | null;
+  /** The confidence field; null shows the bare scene, unpainted. */
   field: FieldRaster | null;
-  /** Estimated scene structure; when present the photo stands up on it and
-      the field becomes paint. Without it the field itself is extruded. */
-  depth?: FieldRaster | null;
+  /** Depth mesh assets; when present the photograph stands up on true
+      geometry. Without them the field itself is extruded. */
+  scene?: SceneAssets | null;
   waterline: number;
   /** Ambient mode: a slow self-orbit with no controls, for illustration. */
   ambient?: boolean;
+  /** Animated illustration lines, anchored in texture coordinates. */
+  sceneProps?: ScenePropSpec;
   className?: string;
 };
 
@@ -25,15 +33,23 @@ function prefersStill() {
 }
 
 /**
- * The relief view: the confidence surface as a physical terrain model.
- *
- * Arrives tilted by an entrance move from straight overhead, which is the
- * flat sheet's viewpoint, so the two views read as one object. Drag to orbit,
- * scroll to zoom, double click to return home.
+ * The relief view. With scene assets the photograph is draped over a depth
+ * mesh in a ground-levelled world, so facades stand vertical; confidence is
+ * the paint. Drag to orbit, scroll to zoom, double click to return home.
  */
-export default function TerrainView({ photo, field, depth = null, waterline, ambient = false, className = "" }: Props) {
+export default function TerrainView({
+  photo,
+  field,
+  scene = null,
+  waterline,
+  ambient = false,
+  sceneProps = null,
+  className = "",
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const renderer = useRef<TerrainRenderer | null>(null);
+  const geometry = useRef<SceneGeometry | null>(null);
+  const propSpec = useRef<ScenePropSpec>(null);
   const view = useRef({ ...HOME_VIEW, waterline });
   const raf = useRef<number | null>(null);
   const anim = useRef<number | null>(null);
@@ -42,11 +58,20 @@ export default function TerrainView({ photo, field, depth = null, waterline, amb
 
   const draw = useCallback(() => {
     raf.current = null;
-    renderer.current?.render(view.current);
+    const r = renderer.current;
+    if (!r) return;
+    const spec = propSpec.current;
+    if (spec && geometry.current) {
+      const world = spec.anchors.map(([u, v]) => geometry.current!.worldAt(u, v));
+      r.setProps(buildProps(spec.kind, world, performance.now() / 1000));
+    } else {
+      r.setProps(null);
+    }
+    r.render(view.current);
     const canvas = canvasRef.current;
     if (canvas) {
       canvas.dataset.frames = String(Number(canvas.dataset.frames ?? 0) + 1);
-      canvas.dataset.ready = String(renderer.current?.ready ?? "no-renderer");
+      canvas.dataset.ready = String(r.ready);
     }
   }, []);
 
@@ -78,18 +103,30 @@ export default function TerrainView({ photo, field, depth = null, waterline, amb
     });
     observer.observe(parent);
 
-    // Synchronous render hook for tests and headless environments, where
+    // Synchronous render hooks for tests and headless environments, where
     // frame callbacks never fire. Harmless in normal use.
     (canvas as HTMLCanvasElement & { __renderNow?: (w: number, h: number) => void }).__renderNow =
       (w: number, h: number) => {
         r!.resize(w, h, 1);
         draw();
       };
+    (canvas as HTMLCanvasElement & {
+      __captureView?: (yaw: number, pitch: number, zoom: number, w: number, h: number) => string;
+    }).__captureView = (yaw, pitch, zoom, w, h) => {
+      view.current = { ...view.current, yaw, pitch, zoom };
+      r!.resize(w, h, 1);
+      draw();
+      return canvas.toDataURL("image/jpeg", 0.6);
+    };
 
     return () => {
       observer.disconnect();
       if (raf.current != null) cancelAnimationFrame(raf.current);
       if (anim.current != null) cancelAnimationFrame(anim.current);
+      if (drift.current != null) {
+        cancelAnimationFrame(drift.current);
+        drift.current = null;
+      }
       r!.dispose();
       renderer.current = null;
     };
@@ -110,11 +147,15 @@ export default function TerrainView({ photo, field, depth = null, waterline, amb
     }
     if (prefersStill()) return;
     let lastT = performance.now();
+    let phase = 0;
     const spin = (now: number) => {
       drift.current = null;
       if (interacted.current) return;
       if (!document.hidden) {
-        view.current.yaw += ((now - lastT) / 1000) * (ambient ? 0.14 : 0.045);
+        // A pendulum across the photographed side: a full orbit would parade
+        // the sheared back of every building.
+        phase += ((now - lastT) / 1000) * (ambient ? 0.22 : 0.07);
+        view.current.yaw = HOME_VIEW.yaw + Math.sin(phase) * 0.42;
         draw();
       }
       lastT = now;
@@ -123,22 +164,38 @@ export default function TerrainView({ photo, field, depth = null, waterline, amb
     drift.current = requestAnimationFrame(spin);
   }, [ambient, draw]);
 
-  useEffect(() => () => {
-    if (drift.current != null) {
-      cancelAnimationFrame(drift.current);
-      drift.current = null;
-    }
-  }, []);
+  useEffect(
+    () => () => {
+      if (drift.current != null) {
+        cancelAnimationFrame(drift.current);
+        drift.current = null;
+      }
+    },
+    [],
+  );
 
-  // A new field is the moment the model answers: tilt up from overhead.
+  // New geometry is the moment the scene stands up: tilt in from overhead.
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (canvas) canvas.dataset.fieldState = field ? (renderer.current ? "set" : "no-renderer") : "none";
-    if (!field || !renderer.current) return;
-    renderer.current.setDepth(depth);
-    renderer.current.setField(smoothField(field));
-    const canvas2 = canvasRef.current;
-    if (canvas2) canvas2.dataset.depth = depth ? "on" : "off";
+    const r = renderer.current;
+    if (canvas) canvas.dataset.fieldState = r ? (scene || field ? "set" : "none") : "no-renderer";
+    if (!r || (!scene && !field)) return;
+
+    if (scene) {
+      geometry.current = buildSceneGeometry(scene);
+      r.setScene(
+        geometry.current.positions,
+        geometry.current.gridW,
+        geometry.current.gridH,
+        scene.depth,
+      );
+      r.setField(field ? smoothField(field) : null);
+    } else {
+      geometry.current = null;
+      r.setField(smoothField(field!));
+    }
+    if (canvas) canvas.dataset.depth = scene ? "scene" : "field";
+
     if (anim.current != null) cancelAnimationFrame(anim.current);
     if (ambient || prefersStill()) {
       view.current = { ...view.current, ...HOME_VIEW, pitch: ambient ? 0.92 : HOME_VIEW.pitch };
@@ -159,7 +216,34 @@ export default function TerrainView({ photo, field, depth = null, waterline, amb
     };
     view.current = { ...view.current, ...from, zoom: HOME_VIEW.zoom };
     anim.current = requestAnimationFrame(step);
-  }, [field, depth, ambient, draw, invalidate, startDrift]);
+  }, [scene, field, ambient, draw, invalidate, startDrift]);
+
+  // Props animate on their own clock, independent of camera drift.
+  const propTick = useRef<number | null>(null);
+  useEffect(() => {
+    propSpec.current = sceneProps;
+    if (propTick.current != null) {
+      cancelAnimationFrame(propTick.current);
+      propTick.current = null;
+    }
+    if (sceneProps && !prefersStill()) {
+      const tick = () => {
+        propTick.current = null;
+        if (!propSpec.current) return;
+        if (!document.hidden) draw();
+        propTick.current = requestAnimationFrame(tick);
+      };
+      propTick.current = requestAnimationFrame(tick);
+    } else {
+      invalidate();
+    }
+    return () => {
+      if (propTick.current != null) {
+        cancelAnimationFrame(propTick.current);
+        propTick.current = null;
+      }
+    };
+  }, [sceneProps, draw, invalidate]);
 
   useEffect(() => {
     view.current.waterline = waterline;
@@ -195,7 +279,10 @@ export default function TerrainView({ photo, field, depth = null, waterline, amb
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
       interacted.current = true;
-      view.current.zoom = Math.min(1.9, Math.max(0.75, view.current.zoom * (e.deltaY < 0 ? 1.08 : 0.93)));
+      view.current.zoom = Math.min(
+        1.9,
+        Math.max(0.75, view.current.zoom * (e.deltaY < 0 ? 1.08 : 0.93)),
+      );
       invalidate();
     };
     const home = () => {
@@ -223,7 +310,7 @@ export default function TerrainView({ photo, field, depth = null, waterline, amb
     <canvas
       ref={canvasRef}
       className={`block h-full w-full touch-none ${ambient ? "" : "cursor-grab active:cursor-grabbing"} ${className}`}
-      aria-label="Relief model of the confidence surface. Drag to tilt, scroll to zoom, double click to reset."
+      aria-label="Relief model: the photograph standing on estimated scene structure, painted by the model's confidence. Drag to tilt, scroll to zoom, double click to reset."
     />
   );
 }
