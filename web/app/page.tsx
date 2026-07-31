@@ -1,3 +1,4 @@
+import UseCases from "@/components/UseCases";
 import Workbench from "@/components/Workbench";
 
 const RECORD = [
@@ -90,6 +91,8 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      <UseCases />
 
       <footer className="datum mt-12 flex flex-wrap justify-between gap-4 border-t border-neat pt-4 text-[11px] text-faint">
         <span>Photography from the UAVid dataset, used under its research licence.</span>
