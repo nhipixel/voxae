@@ -5,7 +5,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Raster } from "@/lib/raster";
 import { decode } from "@/lib/raster";
 import LoadBar from "./LoadBar";
-import TerrainView from "./TerrainView";
+import type { SceneAssets } from "@/lib/scene";
+import { loadScene } from "@/lib/scene";
+import { droneAnchor, ringAnchors, routeAnchors } from "@/lib/anchors";
+import TerrainView, { type ScenePropSpec } from "./TerrainView";
 
 /**
  * One reading, three operating points.
@@ -18,7 +21,7 @@ import TerrainView from "./TerrainView";
 
 const READING = "/readings/uavid-000900-q04-s0.json";
 const PHOTO = "/examples/uavid-000900.png";
-const DEPTH = "/depth/uavid-000900.png";
+const STEM = "uavid-000900";
 
 const CASES = [
   {
@@ -51,7 +54,7 @@ function prefersStill() {
 export default function UseCases() {
   const [photo, setPhoto] = useState<HTMLImageElement | null>(null);
   const [field, setField] = useState<Raster | null>(null);
-  const [depth, setDepth] = useState<Raster | null | undefined>(undefined);
+  const [scene, setScene] = useState<SceneAssets | null | undefined>(undefined);
   const [failed, setFailed] = useState(false);
   const [active, setActive] = useState(0);
   const [waterline, setWaterline] = useState<number>(CASES[0].waterline);
@@ -77,9 +80,7 @@ export default function UseCases() {
         if (live) setFailed(true);
       }
     })();
-    void decode(DEPTH)
-      .then((raster) => live && setDepth(raster))
-      .catch(() => live && setDepth(null));
+    void loadScene(STEM).then((assets) => live && setScene(assets));
     return () => {
       live = false;
       if (anim.current != null) cancelAnimationFrame(anim.current);
@@ -139,7 +140,15 @@ export default function UseCases() {
 
   if (failed) return null;
 
-  const loading = !field || depth === undefined;
+  const loading = !field || scene === undefined;
+
+  const sceneProps: ScenePropSpec = !field
+    ? null
+    : CASES[active].key === "drone"
+      ? { kind: "drone", anchors: droneAnchor(field) }
+      : CASES[active].key === "site"
+        ? { kind: "route", anchors: routeAnchors(field) }
+        : { kind: "rings", anchors: ringAnchors(field) };
 
   return (
     <section className="mt-14">
@@ -162,19 +171,19 @@ export default function UseCases() {
             </div>
           ) : (
             <>
-              <div className="pointer-events-none absolute inset-0">
+              <div className="absolute inset-0">
                 <TerrainView
                   photo={photo}
                   field={field}
-                  depth={depth ?? null}
+                  scene={scene ?? null}
                   waterline={waterline}
-                  ambient
+                  sceneProps={sceneProps}
                 />
               </div>
               <div className="pointer-events-none absolute bottom-2 left-2 flex items-baseline gap-3 bg-linen/85 px-2 py-1">
                 <span className="sheet-label !text-ink">{CASES[active].name}</span>
                 <span className="datum text-[11px] text-faint">
-                  waterline {waterline.toFixed(2)}. Colour is confidence; the terrain is the scene
+                  waterline {waterline.toFixed(2)}. Drag to tilt, scroll to zoom in on the model
                 </span>
               </div>
             </>

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EXAMPLES, type Example } from "@/lib/examples";
 import { loadReading } from "@/lib/readings";
+import type { SceneAssets } from "@/lib/scene";
+import { loadScene } from "@/lib/scene";
 import type { Raster } from "@/lib/raster";
 import { contours, coverage, decode, hatch, hexToRgb, iouAgainst, neatline, relief } from "@/lib/raster";
 import type { LayerKey, Prediction } from "@/lib/types";
@@ -61,7 +63,7 @@ export default function Workbench() {
   const [waterline, setWaterline] = useState(0.5);
   const [base, setBase] = useState<HTMLImageElement | null>(null);
   const [rasters, setRasters] = useState<Partial<Record<LayerKey, Raster>>>({});
-  const [depth, setDepth] = useState<Raster | null | undefined>(undefined);
+  const [scene, setScene] = useState<SceneAssets | null | undefined>(undefined);
 
   const uploadRef = useRef<HTMLInputElement>(null);
   const objectUrl = useRef<string | null>(null);
@@ -85,18 +87,17 @@ export default function Workbench() {
     };
   }, [imageUrl]);
 
-  // Estimated structure ships only for the worked example frames; an upload
+  // Scene structure ships only for the worked example frames; an upload
   // falls back to extruding the confidence field itself.
   useEffect(() => {
     let cancelled = false;
     if (blob || !imageUrl.startsWith("/examples/")) {
-      setDepth(null);
+      setScene(null);
       return;
     }
-    setDepth(undefined);
-    void decode(imageUrl.replace("/examples/", "/depth/"))
-      .then((raster) => !cancelled && setDepth(raster))
-      .catch(() => !cancelled && setDepth(null));
+    setScene(undefined);
+    const stem = imageUrl.slice("/examples/".length).replace(/\.[^.]+$/, "");
+    void loadScene(stem).then((assets) => !cancelled && setScene(assets));
     return () => {
       cancelled = true;
     };
@@ -241,8 +242,8 @@ export default function Workbench() {
   // The boot placeholder holds until the relief is actually drawable, so the
   // arrival is one reveal instead of three part-loaded states.
   useEffect(() => {
-    if ((rasters.trained && depth !== undefined) || error) setBooting(false);
-  }, [rasters.trained, depth, error]);
+    if ((rasters.trained && scene !== undefined) || error) setBooting(false);
+  }, [rasters.trained, scene, error]);
 
   const pickUpload = (file: File) => {
     if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
@@ -363,7 +364,9 @@ export default function Workbench() {
   };
 
   const trained = prediction?.trained;
-  const showRelief = sheetMode === "relief" && Boolean(prediction?.trained && rasters.trained);
+  const sceneLoading = sheetMode === "relief" && scene === undefined;
+  const showRelief =
+    sheetMode === "relief" && !sceneLoading && Boolean(scene || (prediction?.trained && rasters.trained));
   const baseline = prediction?.baseline;
   const gt = prediction?.ground_truth;
   // Prefer the locally recomputed values; they track the waterline.
@@ -403,11 +406,6 @@ export default function Workbench() {
                   </button>
                 ))}
               </div>
-              {cachedAt && (
-                <span className="sheet-label border border-neat px-2 py-0.5">
-                  Cached, {cachedAt}
-                </span>
-              )}
             </div>
           )}
 
@@ -417,7 +415,7 @@ export default function Workbench() {
             <div className={showRelief || booting ? "invisible" : ""}>
               <Plate base={base} layers={mainLayers} liftable canvasRef={sheetRef} />
             </div>
-            {booting && (
+            {(booting || sceneLoading) && (
               <div className="absolute inset-0 flex items-center justify-center">
                 <LoadBar
                   label={
@@ -436,23 +434,25 @@ export default function Workbench() {
                 <TerrainView
                   photo={base}
                   field={rasters.trained ?? null}
-                  depth={depth ?? null}
+                  scene={scene ?? null}
                   waterline={waterline}
                 />
               </div>
             )}
-            {showRelief && !booting && (
+            {showRelief && !booting && prediction && (
               <span className="sheet-label pointer-events-none absolute right-2 top-2 bg-linen/85 px-2 py-0.5">
-                {depth ? "Colour is confidence" : "Elevation is confidence"}
+                {scene ? "Colour is confidence" : "Elevation is confidence"}
               </span>
             )}
           </div>
           <figcaption className="sheet-label mt-2 flex justify-between">
             <span>
               {showRelief
-                ? depth
-                  ? "The scene stands on estimated structure; colour and waterline are the model’s confidence. Drag to tilt, scroll to zoom, double click resets"
-                  : "Height is the model’s confidence, not the buildings’. Drag to tilt, scroll to zoom, double click resets"
+                ? !prediction
+                  ? "The scene stands ready. Read the scene to paint the answer onto it"
+                  : scene
+                    ? "Colour and waterline are the model’s confidence on real structure. Drag to tilt, scroll to zoom, double click resets"
+                    : "Height is the model’s confidence. Drag to tilt, scroll to zoom, double click resets"
                 : cachedAt
                   ? `Cached reading, ${cachedAt}. Read the scene reruns it live`
                   : prediction
