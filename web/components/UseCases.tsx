@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Raster } from "@/lib/raster";
 import { decode } from "@/lib/raster";
+import LoadBar from "./LoadBar";
 import TerrainView from "./TerrainView";
 
 /**
@@ -17,6 +18,7 @@ import TerrainView from "./TerrainView";
 
 const READING = "/readings/uavid-000900-q04-s0.json";
 const PHOTO = "/examples/uavid-000900.png";
+const DEPTH = "/depth/uavid-000900.png";
 
 const CASES = [
   {
@@ -49,6 +51,8 @@ function prefersStill() {
 export default function UseCases() {
   const [photo, setPhoto] = useState<HTMLImageElement | null>(null);
   const [field, setField] = useState<Raster | null>(null);
+  const [depth, setDepth] = useState<Raster | null | undefined>(undefined);
+  const [failed, setFailed] = useState(false);
   const [active, setActive] = useState(0);
   const [waterline, setWaterline] = useState<number>(CASES[0].waterline);
   const anim = useRef<number | null>(null);
@@ -63,16 +67,19 @@ export default function UseCases() {
     (async () => {
       try {
         const res = await fetch(READING);
-        if (!res.ok) return;
+        if (!res.ok) throw new Error(String(res.status));
         const reading = await res.json();
         const probs = reading?.prediction?.trained?.probs_png;
-        if (typeof probs !== "string") return;
+        if (typeof probs !== "string") throw new Error("no field");
         const raster = await decode(probs);
         if (live) setField(raster);
       } catch {
-        /* the section simply stays hidden without its data */
+        if (live) setFailed(true);
       }
     })();
+    void decode(DEPTH)
+      .then((raster) => live && setDepth(raster))
+      .catch(() => live && setDepth(null));
     return () => {
       live = false;
       if (anim.current != null) cancelAnimationFrame(anim.current);
@@ -130,7 +137,9 @@ export default function UseCases() {
     };
   }, [field, glideTo]);
 
-  if (!field) return null;
+  if (failed) return null;
+
+  const loading = !field || depth === undefined;
 
   return (
     <section className="mt-14">
@@ -144,15 +153,32 @@ export default function UseCases() {
 
       <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <div className="relative border border-ink/25 bg-mylar" style={{ aspectRatio: "16 / 9" }}>
-          <div className="pointer-events-none absolute inset-0">
-            <TerrainView photo={photo} field={field} waterline={waterline} ambient />
-          </div>
-          <div className="pointer-events-none absolute bottom-2 left-2 flex items-baseline gap-3 bg-linen/85 px-2 py-1">
-            <span className="sheet-label !text-ink">{CASES[active].name}</span>
-            <span className="datum text-[11px] text-faint">
-              waterline {waterline.toFixed(2)}. Elevation is confidence, not height
-            </span>
-          </div>
+          {loading ? (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <LoadBar
+                label={!field ? "Fetching the cached reading" : "Standing the scene up"}
+                value={!field ? 0.35 : 0.75}
+              />
+            </div>
+          ) : (
+            <>
+              <div className="pointer-events-none absolute inset-0">
+                <TerrainView
+                  photo={photo}
+                  field={field}
+                  depth={depth ?? null}
+                  waterline={waterline}
+                  ambient
+                />
+              </div>
+              <div className="pointer-events-none absolute bottom-2 left-2 flex items-baseline gap-3 bg-linen/85 px-2 py-1">
+                <span className="sheet-label !text-ink">{CASES[active].name}</span>
+                <span className="datum text-[11px] text-faint">
+                  waterline {waterline.toFixed(2)}. Colour is confidence; the terrain is the scene
+                </span>
+              </div>
+            </>
+          )}
         </div>
 
         <ul className="flex flex-col gap-1.5">

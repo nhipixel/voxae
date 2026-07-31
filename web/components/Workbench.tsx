@@ -7,6 +7,7 @@ import { loadReading } from "@/lib/readings";
 import type { Raster } from "@/lib/raster";
 import { contours, coverage, decode, hatch, hexToRgb, iouAgainst, neatline, relief } from "@/lib/raster";
 import type { LayerKey, Prediction } from "@/lib/types";
+import LoadBar from "./LoadBar";
 import Plate from "./Plate";
 import TerrainView from "./TerrainView";
 
@@ -60,6 +61,7 @@ export default function Workbench() {
   const [waterline, setWaterline] = useState(0.5);
   const [base, setBase] = useState<HTMLImageElement | null>(null);
   const [rasters, setRasters] = useState<Partial<Record<LayerKey, Raster>>>({});
+  const [depth, setDepth] = useState<Raster | null | undefined>(undefined);
 
   const uploadRef = useRef<HTMLInputElement>(null);
   const objectUrl = useRef<string | null>(null);
@@ -82,6 +84,23 @@ export default function Workbench() {
       img.onload = null;
     };
   }, [imageUrl]);
+
+  // Estimated structure ships only for the worked example frames; an upload
+  // falls back to extruding the confidence field itself.
+  useEffect(() => {
+    let cancelled = false;
+    if (blob || !imageUrl.startsWith("/examples/")) {
+      setDepth(null);
+      return;
+    }
+    setDepth(undefined);
+    void decode(imageUrl.replace("/examples/", "/depth/"))
+      .then((raster) => !cancelled && setDepth(raster))
+      .catch(() => !cancelled && setDepth(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [blob, imageUrl]);
 
   // Decode once per response, not once per waterline change.
   useEffect(() => {
@@ -222,8 +241,8 @@ export default function Workbench() {
   // The boot placeholder holds until the relief is actually drawable, so the
   // arrival is one reveal instead of three part-loaded states.
   useEffect(() => {
-    if (rasters.trained || error) setBooting(false);
-  }, [rasters.trained, error]);
+    if ((rasters.trained && depth !== undefined) || error) setBooting(false);
+  }, [rasters.trained, depth, error]);
 
   const pickUpload = (file: File) => {
     if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
@@ -399,8 +418,17 @@ export default function Workbench() {
               <Plate base={base} layers={mainLayers} liftable canvasRef={sheetRef} />
             </div>
             {booting && (
-              <div className="sweep absolute inset-0 flex items-center justify-center overflow-hidden">
-                <span className="sheet-label">Preparing the survey</span>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <LoadBar
+                  label={
+                    !prediction
+                      ? "Fetching the cached reading"
+                      : !rasters.trained
+                        ? "Decoding the confidence surface"
+                        : "Standing the scene up"
+                  }
+                  value={!prediction ? 0.25 : !rasters.trained ? 0.55 : 0.85}
+                />
               </div>
             )}
             {showRelief && !booting && (
@@ -408,20 +436,23 @@ export default function Workbench() {
                 <TerrainView
                   photo={base}
                   field={rasters.trained ?? null}
+                  depth={depth ?? null}
                   waterline={waterline}
                 />
               </div>
             )}
             {showRelief && !booting && (
               <span className="sheet-label pointer-events-none absolute right-2 top-2 bg-linen/85 px-2 py-0.5">
-                Elevation is confidence
+                {depth ? "Colour is confidence" : "Elevation is confidence"}
               </span>
             )}
           </div>
           <figcaption className="sheet-label mt-2 flex justify-between">
             <span>
               {showRelief
-                ? "Height is the model’s confidence, not the buildings’. Drag to tilt, scroll to zoom, double click resets"
+                ? depth
+                  ? "The scene stands on estimated structure; colour and waterline are the model’s confidence. Drag to tilt, scroll to zoom, double click resets"
+                  : "Height is the model’s confidence, not the buildings’. Drag to tilt, scroll to zoom, double click resets"
                 : cachedAt
                   ? `Cached reading, ${cachedAt}. Read the scene reruns it live`
                   : prediction

@@ -35,6 +35,8 @@ const TERRAIN_VS = `
 attribute vec2 aUv;
 uniform mat4 uMvp;
 uniform sampler2D uHeight;
+uniform sampler2D uDepth;
+uniform mediump float uUseDepth;
 uniform float uHScale;
 uniform float uAspect;
 varying vec2 vUv;
@@ -42,7 +44,8 @@ varying float vP;
 void main() {
   vUv = aUv;
   vP = texture2D(uHeight, aUv).r;
-  vec3 pos = vec3(aUv.x - 0.5, (0.5 - aUv.y) * uAspect, vP * uHScale);
+  float lift = mix(vP, texture2D(uDepth, aUv).r, uUseDepth);
+  vec3 pos = vec3(aUv.x - 0.5, (0.5 - aUv.y) * uAspect, lift * uHScale);
   gl_Position = uMvp * vec4(pos, 1.0);
 }`;
 
@@ -50,16 +53,22 @@ const TERRAIN_FS = `
 precision mediump float;
 uniform sampler2D uPhoto;
 uniform sampler2D uHeight;
+uniform sampler2D uDepth;
+uniform mediump float uUseDepth;
 uniform vec2 uTexel;
 uniform float uWater;
 varying vec2 vUv;
 varying float vP;
 
+float lift(vec2 uv) {
+  return mix(texture2D(uHeight, uv).r, texture2D(uDepth, uv).r, uUseDepth);
+}
+
 void main() {
-  float hL = texture2D(uHeight, vUv - vec2(uTexel.x, 0.0)).r;
-  float hR = texture2D(uHeight, vUv + vec2(uTexel.x, 0.0)).r;
-  float hT = texture2D(uHeight, vUv - vec2(0.0, uTexel.y)).r;
-  float hB = texture2D(uHeight, vUv + vec2(0.0, uTexel.y)).r;
+  float hL = lift(vUv - vec2(uTexel.x, 0.0));
+  float hR = lift(vUv + vec2(uTexel.x, 0.0));
+  float hT = lift(vUv - vec2(0.0, uTexel.y));
+  float hB = lift(vUv + vec2(0.0, uTexel.y));
   // Height scale times a tuned gain, baked so no uniform crosses stages:
   // shared uniforms must match precision between shaders, and ANGLE enforces
   // it at link time.
@@ -75,7 +84,7 @@ void main() {
     vec3 mid  = vec3(0.788, 0.698, 0.494);
     vec3 high = vec3(0.957, 0.937, 0.886);
     vec3 ramp = t < 0.5 ? mix(low, mid, t * 2.0) : mix(mid, high, t * 2.0 - 1.0);
-    col = mix(photo, ramp, 0.40) * light;
+    col = mix(photo, ramp, mix(0.40, 0.26, uUseDepth)) * light;
 
     float d = abs(fract(vP * 10.0) - 0.5);
     float line = 1.0 - smoothstep(0.0, 0.14, d);
@@ -213,6 +222,7 @@ export class TerrainRenderer {
   private flat: WebGLProgram;
   private photoTex: WebGLTexture;
   private heightTex: WebGLTexture;
+  private depthTex: WebGLTexture;
   private uvBuffer: WebGLBuffer;
   private indexBuffer: WebGLBuffer;
   private indexCount = 0;
@@ -236,6 +246,7 @@ export class TerrainRenderer {
     this.flat = program(gl, FLAT_VS, FLAT_FS);
     this.photoTex = gl.createTexture()!;
     this.heightTex = gl.createTexture()!;
+    this.depthTex = gl.createTexture()!;
     this.uvBuffer = gl.createBuffer()!;
     this.indexBuffer = gl.createBuffer()!;
     this.skirtBuffer = gl.createBuffer()!;
@@ -268,6 +279,7 @@ export class TerrainRenderer {
   }
 
   private field: FieldRaster | null = null;
+  private depthField: FieldRaster | null = null;
 
   setField(field: FieldRaster) {
     this.field = field;
@@ -278,9 +290,17 @@ export class TerrainRenderer {
     this.ready = true;
   }
 
-  /** Field value at uv, nearest sample; the skirt uses it to meet the rim. */
+  /** Real scene structure to stand the photograph up on; null falls back to
+      extruding the confidence field itself. */
+  setDepth(depth: FieldRaster | null) {
+    this.depthField = depth;
+    if (depth) this.uploadTexture(this.depthTex, null, depth);
+    if (this.field) this.buildGeometry();
+  }
+
+  /** Displacement at uv, nearest sample; the skirt uses it to meet the rim. */
   private sample(u: number, v: number): number {
-    const f = this.field;
+    const f = this.depthField ?? this.field;
     if (!f) return 0;
     const x = Math.min(f.width - 1, Math.max(0, Math.round(u * (f.width - 1))));
     const y = Math.min(f.height - 1, Math.max(0, Math.round(v * (f.height - 1))));
@@ -390,7 +410,10 @@ export class TerrainRenderer {
     // Terrain.
     gl.useProgram(this.terrain);
     gl.uniformMatrix4fv(gl.getUniformLocation(this.terrain, "uMvp"), false, mvp);
-    gl.uniform1f(gl.getUniformLocation(this.terrain, "uHScale"), HEIGHT_SCALE);
+    gl.uniform1f(
+      gl.getUniformLocation(this.terrain, "uHScale"),
+      this.depthField ? 0.21 : HEIGHT_SCALE,
+    );
     gl.uniform1f(gl.getUniformLocation(this.terrain, "uAspect"), this.aspect);
     gl.uniform1f(gl.getUniformLocation(this.terrain, "uWater"), view.waterline);
     gl.uniform2f(gl.getUniformLocation(this.terrain, "uTexel"), this.texel[0], this.texel[1]);
@@ -400,6 +423,10 @@ export class TerrainRenderer {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.heightTex);
     gl.uniform1i(gl.getUniformLocation(this.terrain, "uHeight"), 1);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.depthTex ?? this.heightTex);
+    gl.uniform1i(gl.getUniformLocation(this.terrain, "uDepth"), 2);
+    gl.uniform1f(gl.getUniformLocation(this.terrain, "uUseDepth"), this.depthField ? 1 : 0);
 
     const aUv = gl.getAttribLocation(this.terrain, "aUv");
     gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuffer);
@@ -422,7 +449,13 @@ export class TerrainRenderer {
     gl.vertexAttribPointer(aShade, 1, gl.FLOAT, false, 16, 12);
     gl.drawArrays(gl.TRIANGLES, 0, this.skirtCount);
 
-    // Sea, translucent, at the waterline's elevation.
+    // Sea, translucent, at the waterline's elevation. Over real structure the
+    // waterline is a colour cut, not a physical plane, so the sea stays home.
+    if (this.depthField) {
+      gl.disableVertexAttribArray(aPos);
+      gl.disableVertexAttribArray(aShade);
+      return;
+    }
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.depthMask(false);
@@ -467,6 +500,7 @@ export class TerrainRenderer {
     gl.deleteProgram(this.flat);
     gl.deleteTexture(this.photoTex);
     gl.deleteTexture(this.heightTex);
+    gl.deleteTexture(this.depthTex);
     gl.deleteBuffer(this.uvBuffer);
     gl.deleteBuffer(this.indexBuffer);
     gl.deleteBuffer(this.skirtBuffer);

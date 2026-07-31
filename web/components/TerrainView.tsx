@@ -8,13 +8,16 @@ import { HOME_VIEW, TerrainRenderer, smoothField } from "@/lib/terrain3d";
 type Props = {
   photo: HTMLImageElement | null;
   field: FieldRaster | null;
+  /** Estimated scene structure; when present the photo stands up on it and
+      the field becomes paint. Without it the field itself is extruded. */
+  depth?: FieldRaster | null;
   waterline: number;
   /** Ambient mode: a slow self-orbit with no controls, for illustration. */
   ambient?: boolean;
   className?: string;
 };
 
-const PITCH_MIN = 0.32;
+const PITCH_MIN = 0.5;
 const PITCH_MAX = 1.53;
 
 function prefersStill() {
@@ -28,7 +31,7 @@ function prefersStill() {
  * flat sheet's viewpoint, so the two views read as one object. Drag to orbit,
  * scroll to zoom, double click to return home.
  */
-export default function TerrainView({ photo, field, waterline, ambient = false, className = "" }: Props) {
+export default function TerrainView({ photo, field, depth = null, waterline, ambient = false, className = "" }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const renderer = useRef<TerrainRenderer | null>(null);
   const view = useRef({ ...HOME_VIEW, waterline });
@@ -101,7 +104,11 @@ export default function TerrainView({ photo, field, waterline, ambient = false, 
 
   /** A slow turn, running until the visitor interacts or the tab hides. */
   const startDrift = useCallback(() => {
-    if (drift.current != null || prefersStill()) return;
+    if (drift.current != null) {
+      cancelAnimationFrame(drift.current);
+      drift.current = null;
+    }
+    if (prefersStill()) return;
     let lastT = performance.now();
     const spin = (now: number) => {
       drift.current = null;
@@ -117,7 +124,10 @@ export default function TerrainView({ photo, field, waterline, ambient = false, 
   }, [ambient, draw]);
 
   useEffect(() => () => {
-    if (drift.current != null) cancelAnimationFrame(drift.current);
+    if (drift.current != null) {
+      cancelAnimationFrame(drift.current);
+      drift.current = null;
+    }
   }, []);
 
   // A new field is the moment the model answers: tilt up from overhead.
@@ -125,7 +135,10 @@ export default function TerrainView({ photo, field, waterline, ambient = false, 
     const canvas = canvasRef.current;
     if (canvas) canvas.dataset.fieldState = field ? (renderer.current ? "set" : "no-renderer") : "none";
     if (!field || !renderer.current) return;
+    renderer.current.setDepth(depth);
     renderer.current.setField(smoothField(field));
+    const canvas2 = canvasRef.current;
+    if (canvas2) canvas2.dataset.depth = depth ? "on" : "off";
     if (anim.current != null) cancelAnimationFrame(anim.current);
     if (ambient || prefersStill()) {
       view.current = { ...view.current, ...HOME_VIEW, pitch: ambient ? 0.92 : HOME_VIEW.pitch };
@@ -146,7 +159,7 @@ export default function TerrainView({ photo, field, waterline, ambient = false, 
     };
     view.current = { ...view.current, ...from, zoom: HOME_VIEW.zoom };
     anim.current = requestAnimationFrame(step);
-  }, [field, ambient, draw, invalidate, startDrift]);
+  }, [field, depth, ambient, draw, invalidate, startDrift]);
 
   useEffect(() => {
     view.current.waterline = waterline;
@@ -182,7 +195,7 @@ export default function TerrainView({ photo, field, waterline, ambient = false, 
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
       interacted.current = true;
-      view.current.zoom = Math.min(2.4, Math.max(0.65, view.current.zoom * (e.deltaY < 0 ? 1.08 : 0.93)));
+      view.current.zoom = Math.min(1.9, Math.max(0.75, view.current.zoom * (e.deltaY < 0 ? 1.08 : 0.93)));
       invalidate();
     };
     const home = () => {
