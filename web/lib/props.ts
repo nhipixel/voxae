@@ -11,10 +11,14 @@ export type PropKind = "drone" | "route" | "rings";
 type V3 = [number, number, number];
 export type PropGroup = { data: Float32Array; color: [number, number, number, number] };
 
-const INK: [number, number, number, number] = [0.15, 0.17, 0.18, 1];
-const HULL: [number, number, number, number] = [0.92, 0.93, 0.9, 1];
-const ACCENT: [number, number, number, number] = [0.56, 0.23, 0.15, 1];
-const GLOW: [number, number, number, number] = [0.17, 0.42, 0.54, 0.4];
+// Against a dark table the structural parts must read light; the accent and
+// glow lift to stay legible over night-toned photography.
+const INK: [number, number, number, number] = [0.42, 0.47, 0.5, 1];
+const HULL: [number, number, number, number] = [0.93, 0.95, 0.94, 1];
+const ACCENT: [number, number, number, number] = [0.88, 0.42, 0.26, 1];
+const GLOW: [number, number, number, number] = [0.35, 0.72, 0.9, 0.42];
+const BLUR: [number, number, number, number] = [0.72, 0.8, 0.84, 0.1];
+const BEAM: [number, number, number, number] = [0.55, 0.84, 0.98, 0.07];
 
 class Mesh {
   tris: number[] = [];
@@ -77,6 +81,20 @@ class Mesh {
     }
   }
 
+  /** An open cone pointing down, for a landing beam. */
+  cone(apex: V3, radius: number, depth: number, n = 22, shade = 1) {
+    for (let i = 0; i < n; i++) {
+      const a0 = (i / n) * Math.PI * 2;
+      const a1 = ((i + 1) / n) * Math.PI * 2;
+      const rim = (a: number): V3 => [
+        apex[0] + radius * Math.cos(a),
+        apex[1] + radius * Math.sin(a),
+        apex[2] - depth,
+      ];
+      this.tri(apex, rim(a0), rim(a1), shade);
+    }
+  }
+
   /** A flat ribbon along a polyline, hovering just off the ground. */
   ribbon(points: V3[], width: number, lift = 0.004, shade = 1.0) {
     for (let i = 0; i < points.length - 1; i++) {
@@ -104,31 +122,110 @@ class Mesh {
 
 function droneProps(anchor: V3, t: number): PropGroup[] {
   const [ax, ay, az] = anchor;
-  const hz = az + 0.16 + 0.01 * Math.sin(t * 2.2);
+
+  // A landing cycle, not a hover: descend, settle on the pad, lift off again.
+  const phase = (t * 0.075) % 1;
+  const ease = (x: number) => 1 - Math.pow(1 - Math.min(1, Math.max(0, x)), 3);
+  let lift: number;
+  if (phase < 0.44) lift = 1 - ease(phase / 0.44);
+  else if (phase < 0.62) lift = 0;
+  else lift = ease((phase - 0.62) / 0.38);
+  const grounded = lift < 0.02;
+  const hz = az + 0.016 + lift * (0.115 + 0.006 * Math.sin(t * 2.2));
+  const spin = grounded ? t * 3 : t * 18;
+  // Oversized against a real drone so the airframe reads, but small enough
+  // that the pad sits on the plaza instead of swallowing it. The panel
+  // zooms in rather than the model scaling up.
+  const S = 0.5;
+
   const hull = new Mesh();
   const dark = new Mesh();
   const glow = new Mesh();
+  const blur = new Mesh();
+  const beam = new Mesh();
+  const port = new Mesh();
+  const star = new Mesh();
 
-  hull.box([ax, ay, hz], [0.016, 0.016, 0.006]);
-  for (const q of [Math.PI / 4, (3 * Math.PI) / 4, (5 * Math.PI) / 4, (7 * Math.PI) / 4]) {
-    const ex = ax + Math.cos(q) * 0.03;
-    const ey = ay + Math.sin(q) * 0.03;
-    hull.box([(ax + ex) / 2, (ay + ey) / 2, hz], [0.014, 0.0035, 0.0018], q);
-    dark.prism([ex, ey, hz + 0.006], 0.0035, 0.004, 6, 0.9);
-    // Two-blade propeller, spinning.
-    dark.box([ex, ey, hz + 0.011], [0.016, 0.0022, 0.0008], t * 14 + q);
+  // Fuselage: a tapered body, a raised avionics deck, and a battery pack.
+  hull.box([ax, ay, hz], [0.019 * S, 0.024 * S, 0.006 * S]);
+  hull.box([ax, ay, hz + 0.008 * S], [0.013 * S, 0.016 * S, 0.004 * S]);
+  hull.box([ax, ay + 0.004 * S, hz + 0.013 * S], [0.009 * S, 0.011 * S, 0.002 * S]);
+  dark.box([ax, ay - 0.002 * S, hz - 0.008 * S], [0.012 * S, 0.015 * S, 0.003 * S]);
+
+  // Nose gimbal: yoke, ball, and lens, panning gently as it scans.
+  const pan = Math.sin(t * 0.9) * 0.35;
+  const gy = ay - 0.026 * S;
+  dark.box([ax, gy + 0.004 * S, hz - 0.004 * S], [0.007 * S, 0.003 * S, 0.004 * S]);
+  hull.prism([ax, gy, hz - 0.009 * S], 0.0062 * S, 0.005 * S, 10, 0.95);
+  dark.prism(
+    [ax + Math.sin(pan) * 0.005 * S, gy - Math.cos(pan) * 0.004 * S, hz - 0.009 * S],
+    0.0034 * S, 0.0035 * S, 10, 0.65, "x",
+  );
+
+  // Antennae.
+  dark.box([ax - 0.014 * S, ay + 0.02 * S, hz + 0.008 * S], [0.0011 * S, 0.0011 * S, 0.008 * S]);
+  dark.box([ax + 0.014 * S, ay + 0.02 * S, hz + 0.008 * S], [0.0011 * S, 0.0011 * S, 0.008 * S]);
+
+  const arms = [Math.PI / 4, (3 * Math.PI) / 4, (5 * Math.PI) / 4, (7 * Math.PI) / 4];
+  for (const q of arms) {
+    const ex = ax + Math.cos(q) * 0.04 * S;
+    const ey = ay + Math.sin(q) * 0.04 * S;
+    hull.box([(ax + ex) / 2, (ay + ey) / 2, hz], [0.019 * S, 0.0042 * S, 0.0022 * S], q);
+    hull.prism([ex, ey, hz + 0.004 * S], 0.005 * S, 0.005 * S, 10, 0.95);
+    dark.prism([ex, ey, hz + 0.0105 * S], 0.0032 * S, 0.0022 * S, 8, 0.8);
+
+    // Blades, plus a translucent disc that reads as rotor blur in flight.
+    for (const k of [0, 1, 2]) {
+      dark.box(
+        [ex, ey, hz + 0.0135 * S],
+        [0.021 * S, 0.0024 * S, 0.0008 * S],
+        spin + q + (k * Math.PI) / 3,
+      );
+    }
+    if (!grounded) blur.disc([ex, ey, hz + 0.0138 * S], 0.006 * S, 0.021 * S, 20);
+
+    // Motor bells carry the navigation lights: port red, starboard green.
+    const blink = Math.sin(t * 6) > 0;
+    const lamp: V3 = [ex, ey, hz + 0.001 * S];
+    if (Math.cos(q) < 0 && blink) port.prism(lamp, 0.0026 * S, 0.0026 * S, 6, 1);
+    if (Math.cos(q) > 0 && !blink) star.prism(lamp, 0.0026 * S, 0.0026 * S, 6, 1);
   }
-  dark.box([ax - 0.01, ay, hz - 0.009], [0.0018, 0.013, 0.003]);
-  dark.box([ax + 0.01, ay, hz - 0.009], [0.0018, 0.013, 0.003]);
 
-  // Descent dashes and the landing pad.
-  for (let z = hz - 0.028; z > az + 0.012; z -= 0.022) {
-    dark.box([ax, ay, z], [0.0016, 0.0016, 0.005]);
+  // Landing gear: angled legs onto flat feet, compressing on touchdown.
+  const squat = grounded ? 0.0018 * S : 0;
+  for (const sx of [-1, 1]) {
+    const lx = ax + 0.013 * S * sx;
+    dark.box([lx, ay, hz - 0.014 * S + squat], [0.0022 * S, 0.019 * S, 0.007 * S]);
+    hull.box([lx, ay, hz - 0.02 * S + squat], [0.0055 * S, 0.021 * S, 0.0014 * S]);
   }
-  glow.disc([ax, ay, az + 0.004], 0.018, 0.03);
-  dark.disc([ax, ay, az + 0.005], 0.028, 0.0305, 28, 1.0);
 
-  return [hull.build(HULL), dark.build(INK), glow.build(GLOW)];
+  // A landing beam while airborne; the pad answers with a pulse once down.
+  if (!grounded) {
+    beam.cone([ax, ay, hz - 0.021 * S], 0.03 * S, hz - 0.021 * S - (az + 0.006));
+    for (let z = hz - 0.03 * S; z > az + 0.016; z -= 0.02) {
+      dark.box([ax, ay, z], [0.0016 * S, 0.0016 * S, 0.0045 * S]);
+    }
+  }
+  // Contact shadow, so the drone never looks pasted on.
+  const shadowR = 0.02 * S + lift * 0.016;
+  glow.disc([ax, ay, az + 0.0035], 0, shadowR, 24, 0.35);
+
+  const pulse = grounded ? 0.004 * (1 + Math.sin(t * 5)) : 0;
+  glow.disc([ax, ay, az + 0.004], 0.019 * S - pulse * 0.4, 0.03 * S + pulse);
+  hull.disc([ax, ay, az + 0.005], 0.029 * S, 0.031 * S, 28, 1.0);
+  hull.box([ax - 0.0065 * S, ay, az + 0.005], [0.0016 * S, 0.009 * S, 0.0008]);
+  hull.box([ax + 0.0065 * S, ay, az + 0.005], [0.0016 * S, 0.009 * S, 0.0008]);
+  hull.box([ax, ay, az + 0.005], [0.0055 * S, 0.0016 * S, 0.0008]);
+
+  return [
+    hull.build(HULL),
+    dark.build(INK),
+    blur.build(BLUR),
+    beam.build(BEAM),
+    glow.build(GLOW),
+    port.build([0.95, 0.28, 0.22, 1]),
+    star.build([0.32, 0.9, 0.45, 1]),
+  ];
 }
 
 function routeProps(anchors: V3[], t: number): PropGroup[] {
@@ -188,8 +285,8 @@ function ringProps(anchors: V3[], t: number): PropGroup[] {
     pylons.box([a[0], a[1], a[2] + 0.03], [0.0022, 0.0022, 0.03]);
     const pulse = 0.006 + 0.002 * Math.sin(t * 3 + i);
     heads.box([a[0], a[1], a[2] + 0.066], [pulse, pulse, pulse], t * 0.8);
-    const r = ((t * 0.08 + i * 0.37) % 1) * 0.09 + 0.014;
-    sweep.disc([a[0], a[1], a[2] + 0.004], r - 0.004, r);
+    const r = ((t * 0.07 + i * 0.37) % 1) * 0.048 + 0.012;
+    sweep.disc([a[0], a[1], a[2] + 0.004], r - 0.003, r);
   });
   return [pylons.build(INK), heads.build(ACCENT), sweep.build(GLOW)];
 }
