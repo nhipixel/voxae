@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { DRONE_ANCHORS, RING_ANCHORS, ROUTE_ANCHORS, type UV } from "@/lib/anchors";
+import { droneAnchor, ringAnchors, routeAnchors, type UV } from "@/lib/anchors";
 import type { Raster } from "@/lib/raster";
 import { decode } from "@/lib/raster";
 import type { SceneAssets } from "@/lib/scene";
@@ -30,27 +30,27 @@ const CASES = [
     key: "drone",
     name: "Drone landing",
     waterline: 0.85,
-    line: "A landing decision tolerates no doubt. Only ground the model is nearly certain of stays above water, and the drone descends to it.",
-    props: { kind: "drone", anchors: DRONE_ANCHORS } as ScenePropSpec,
-    home: { yaw: -0.12, pitch: 0.78, zoom: 4.2, ...at(DRONE_ANCHORS[0]) },
+    line: "A landing decision tolerates no doubt. Only ground the model is nearly certain of stays above water, and the pad is placed where nothing is standing.",
+    kind: "drone" as const,
+    view: { yaw: -0.12, pitch: 0.78, zoom: 4.2 },
     Icon: IconDrone,
   },
   {
     key: "site",
     name: "Site access",
     waterline: 0.5,
-    line: "Heavy equipment routed along the carriageway the model scored 0.745 against the survey. The ribbon is the confident ground.",
-    props: { kind: "route", anchors: ROUTE_ANCHORS } as ScenePropSpec,
-    home: { yaw: 0.12, pitch: 0.76, zoom: 3.1, ...at(ROUTE_ANCHORS[2]) },
+    line: "Heavy equipment routed along the carriageway the model scored 0.745 against the survey. The route follows clear ground and bends around parked cars.",
+    kind: "route" as const,
+    view: { yaw: 0.12, pitch: 0.76, zoom: 3.1 },
     Icon: IconHardHat,
   },
   {
     key: "triage",
     name: "Disaster triage",
     waterline: 0.25,
-    line: "After a storm, cast a wide net: beacons sweep every candidate sector a low waterline surfaces, and a crew verifies by eye.",
-    props: { kind: "rings", anchors: RING_ANCHORS } as ScenePropSpec,
-    home: { yaw: -0.3, pitch: 0.95, zoom: 1.7 },
+    line: "After a storm, cast a wide net: beacons sweep the open sectors a low waterline surfaces, and a crew verifies by eye.",
+    kind: "rings" as const,
+    view: { yaw: -0.3, pitch: 0.95, zoom: 1.7 },
     Icon: IconBeacon,
   },
 ] as const;
@@ -58,6 +58,8 @@ const CASES = [
 export default function UseCases() {
   const [photo, setPhoto] = useState<HTMLImageElement | null>(null);
   const [field, setField] = useState<Raster | null>(null);
+  // The annotated answer, when the frame has one: its holes are the cars.
+  const [occupancy, setOccupancy] = useState<Raster | null>(null);
   const [scene, setScene] = useState<SceneAssets | null | undefined>(undefined);
   const [failed, setFailed] = useState(false);
   const [reliefFault, setReliefFault] = useState<string | null>(null);
@@ -76,6 +78,11 @@ export default function UseCases() {
         if (typeof probs !== "string") throw new Error("no field");
         const raster = await decode(probs);
         if (live) setField(raster);
+        const gt = reading?.prediction?.ground_truth?.mask_png;
+        if (typeof gt === "string") {
+          const gtRaster = await decode(gt);
+          if (live) setOccupancy(gtRaster);
+        }
       } catch {
         if (live) setFailed(true);
       }
@@ -88,7 +95,19 @@ export default function UseCases() {
 
   if (failed) return null;
 
-  const loading = !field || scene === undefined;
+  // Measured once per reading: where the answer is confident and the surface
+  // model says nothing is standing.
+  const placements = useMemo(() => {
+    if (!field) return null;
+    const relief = scene?.depth ?? null;
+    return {
+      drone: droneAnchor(field, relief, occupancy),
+      route: routeAnchors(field, relief, occupancy),
+      rings: ringAnchors(field, relief, occupancy),
+    };
+  }, [field, scene, occupancy]);
+
+  const loading = !field || scene === undefined || !placements;
 
   return (
     <section className="mt-14">
@@ -112,7 +131,13 @@ export default function UseCases() {
         </div>
       ) : (
         <div className="mt-6 grid gap-5 md:grid-cols-3">
-          {CASES.map(({ key, name, waterline, line, props, home, Icon }) => (
+          {CASES.map(({ key, name, waterline, line, kind, view, Icon }) => {
+            const anchors = placements[kind === "route" ? "route" : kind === "rings" ? "rings" : "drone"];
+            const focus = anchors[Math.floor(anchors.length / 2)] ?? [0.5, 0.5];
+            // Beacons are a survey of the whole sheet; the other two panels
+            // study one device and frame on it.
+            const home = kind === "rings" ? { ...view } : { ...view, ...at(focus) };
+            return (
             <figure key={key} className="group m-0">
               <div
                 className="relative overflow-hidden border border-ink/25 bg-mylar transition group-hover:border-ink"
@@ -131,7 +156,7 @@ export default function UseCases() {
                       field={field}
                       scene={scene ?? null}
                       waterline={waterline}
-                      sceneProps={props}
+                      sceneProps={anchors.length ? { kind, anchors: anchors as [number, number][] } : null}
                       home={home}
                       onUnavailable={setReliefFault}
                     />
@@ -149,7 +174,8 @@ export default function UseCases() {
                 <p className="mt-1.5 text-xs leading-relaxed text-faint">{line}</p>
               </figcaption>
             </figure>
-          ))}
+            );
+          })}
         </div>
       )}
       {!loading && (

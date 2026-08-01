@@ -36,6 +36,9 @@ const LAYERS: { key: LayerKey; name: string; note: string; swatch: string }[] = 
 // waits on a hosted model that has been taking far longer. The bar is paced
 // against each rather than pretending to know real progress.
 const EXPECTED_BRIDGE_S = 8;
+// A cold GPU allocation outlasts a single request, so the wait is retried for
+// the visitor rather than handed back to them as a failure to click through.
+const WAKE_ATTEMPTS = 6;
 const EXPECTED_BASELINE_S = 45;
 
 function prefersStill() {
@@ -53,6 +56,7 @@ export default function Workbench() {
   const [pending, setPending] = useState(false);
   const [comparing, setComparing] = useState(false);
   const [waited, setWaited] = useState(0);
+  const [attempt, setAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState<number | null>(null);
   const [cachedAt, setCachedAt] = useState<string | null>(null);
@@ -262,21 +266,43 @@ export default function Workbench() {
         form.append("query", query.trim());
         if (withBaseline) form.append("baseline", "1");
 
-        const res = await fetch("/api/segment", { method: "POST", body: form });
-        // A platform level failure answers in plain text, so parsing blind
-        // turns a readable problem into a syntax error.
-        const raw = await res.text();
-        let body: Prediction & { error?: string };
-        try {
-          body = JSON.parse(raw);
-        } catch {
-          throw new Error(
-            res.status === 504 || res.status === 502
-              ? "The model did not answer in time. Try again."
-              : `The server returned an unexpected response (${res.status}).`,
-          );
+        let body: (Prediction & { error?: string; kind?: string }) | null = null;
+        let lastError = "The request did not complete.";
+
+        // A waking GPU is a wait, not a failure: keep asking on the visitor's
+        // behalf. Anything else (quota, a bad request) stops immediately,
+        // because retrying it would only repeat the same answer.
+        for (let n = 1; n <= WAKE_ATTEMPTS; n++) {
+          setAttempt(n);
+          const res = await fetch("/api/segment", { method: "POST", body: form });
+          // A platform level failure answers in plain text, so parsing blind
+          // turns a readable problem into a syntax error.
+          const raw = await res.text();
+          let parsed: (Prediction & { error?: string; kind?: string }) | null = null;
+          try {
+            parsed = JSON.parse(raw);
+          } catch {
+            lastError =
+              res.status === 504 || res.status === 502
+                ? "The model did not answer in time."
+                : `The server returned an unexpected response (${res.status}).`;
+          }
+          if (res.ok && parsed) {
+            body = parsed;
+            break;
+          }
+          if (parsed?.error) lastError = parsed.error;
+          const waking = res.status === 504 || parsed?.kind === "waking";
+          if (!waking || n === WAKE_ATTEMPTS) {
+            throw new Error(
+              waking
+                ? "The GPU did not finish waking up. It usually takes about a minute; try again shortly."
+                : lastError,
+            );
+          }
+          await new Promise((r) => setTimeout(r, 1500));
         }
-        if (!res.ok) throw new Error(body?.error ?? `The request failed (${res.status}).`);
+        if (!body) throw new Error(lastError);
 
         const result = body as Prediction;
         setPrediction(result);
@@ -288,6 +314,7 @@ export default function Workbench() {
       } finally {
         setPending(false);
         setComparing(false);
+        setAttempt(0);
       }
     },
     [blob, filename, floodTo, imageUrl, pending, query],
@@ -585,14 +612,22 @@ export default function Workbench() {
                 </div>
                 <p className="datum mt-1.5 flex justify-between gap-2 text-[11px] text-faint">
                   <span>
-                    {comparing
-                      ? "Running the zero-shot baseline on the same query"
-                      : waited < 4
-                        ? "Sending the photograph"
-                        : "The bridge is reading it"}
+                    {attempt > 1
+                      ? `Allocating the GPU, attempt ${attempt} of ${WAKE_ATTEMPTS}`
+                      : comparing
+                        ? "Running the zero-shot baseline on the same query"
+                        : waited < 4
+                          ? "Sending the photograph"
+                          : "The bridge is reading it"}
                   </span>
                   <span>{waited.toFixed(1)} s</span>
                 </p>
+                {attempt > 1 && (
+                  <p className="mt-1 text-[11px] leading-relaxed text-faint">
+                    The GPU sleeps when idle and takes about a minute to come back. This keeps
+                    asking for you.
+                  </p>
+                )}
               </div>
             )}
 

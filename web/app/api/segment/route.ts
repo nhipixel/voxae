@@ -95,7 +95,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            "The model was still waking up. It sleeps when idle and takes about a minute to start. Try again and it should answer quickly.",
+            "The GPU is being allocated, which takes about a minute after an idle period. Try again shortly.",
           kind: "waking",
         },
         { status: 504 },
