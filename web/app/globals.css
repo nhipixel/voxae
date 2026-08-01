@@ -1,18 +1,21 @@
 @import "tailwindcss";
 
 @theme {
-  /* A survey sheet, not paper stock: cool drafting linen rather than cream. */
-  --color-linen: #dce0d8;
-  --color-mylar: #c7cdc3;
-  --color-neat: #a9b1a5;
-  --color-ink: #22282a;
-  --color-faint: #5f6a64;
+  /* A backlit chart table at night. The token names keep their roles from the
+     daylight sheet, so `ink` is still the strongest value and still what a
+     primary button is filled with; it is simply light on dark now. */
+  --color-linen: #0b0f11;
+  --color-mylar: #141a1d;
+  --color-neat: #2b3438;
+  --color-ink: #e9efea;
+  --color-faint: #8a958f;
 
-  /* Map convention, so each layer's colour states its role: brown is relief,
-     blue is surveyed reference, red is a revision overprint. */
-  --color-contour: #7a5b2e;
-  --color-hydro: #2c6b8a;
-  --color-revision: #8e3a26;
+  /* Map convention, so each layer's colour states its role: amber is relief,
+     blue is surveyed reference, red is a revision overprint. Lifted for
+     contrast against the dark ground. */
+  --color-contour: #cfa63f;
+  --color-hydro: #4fa6cb;
+  --color-revision: #dc6a4c;
 
   --font-display: var(--font-display), ui-sans-serif, sans-serif;
   --font-body: var(--font-body), ui-sans-serif, sans-serif;
@@ -30,9 +33,14 @@ html {
 body {
   min-height: 100vh;
   background-image:
-    linear-gradient(to right, rgba(34, 40, 42, 0.045) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(34, 40, 42, 0.045) 1px, transparent 1px);
+    linear-gradient(to right, rgba(233, 239, 234, 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(233, 239, 234, 0.045) 1px, transparent 1px);
   background-size: 24px 24px;
+}
+
+::selection {
+  background: var(--color-hydro);
+  color: var(--color-linen);
 }
 
 .sheet-title {
