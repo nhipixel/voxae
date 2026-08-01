@@ -57,6 +57,9 @@ export default function Workbench() {
   const [elapsed, setElapsed] = useState<number | null>(null);
   const [cachedAt, setCachedAt] = useState<string | null>(null);
   const [sheetMode, setSheetMode] = useState<"relief" | "flat">("relief");
+  const [reliefFault, setReliefFault] = useState<string | null>(null);
+  // The relief opens as the scene alone; the answer is painted on request.
+  const [paintConfidence, setPaintConfidence] = useState(false);
   const [booting, setBooting] = useState(true);
 
   const [layers, setLayers] = useState(START);
@@ -97,7 +100,15 @@ export default function Workbench() {
     }
     setScene(undefined);
     const stem = imageUrl.slice("/examples/".length).replace(/\.[^.]+$/, "");
-    void loadScene(stem).then((assets) => !cancelled && setScene(assets));
+    // One retry, then a visible fallback: a missing 3D asset must never
+    // silently impersonate a design change.
+    void loadScene(stem)
+      .then(async (assets) => assets ?? loadScene(stem))
+      .then((assets) => {
+        if (cancelled) return;
+        setScene(assets);
+        if (!assets) setError("The 3D scene assets did not load; showing the flat sheet.");
+      });
     return () => {
       cancelled = true;
     };
@@ -217,32 +228,10 @@ export default function Workbench() {
     void showCached(next.query);
   };
 
-  // First impression: the default example's reading, before anything is asked.
+  // First load shows the scene itself, unpainted: no numbers a visitor never
+  // asked for. Readings appear when they pick an example or run live.
   useEffect(() => {
-    let live = true;
-    void loadReading(EXAMPLES[0].query).then((reading) => {
-      if (!live) return;
-      if (!reading) {
-        setBooting(false);
-        return;
-      }
-      setPrediction((current) => {
-        if (current) return current;
-        setCachedAt(reading.captured_at);
-        floodTo(reading.prediction.trained?.threshold ?? 0.5);
-        return reading.prediction;
-      });
-    });
-    return () => {
-      live = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // The boot placeholder holds until the relief is actually drawable, so the
-  // arrival is one reveal instead of three part-loaded states.
-  useEffect(() => {
-    if ((rasters.trained && scene !== undefined) || error) setBooting(false);
+    if (scene !== undefined || error) setBooting(false);
   }, [rasters.trained, scene, error]);
 
   const pickUpload = (file: File) => {
@@ -366,7 +355,10 @@ export default function Workbench() {
   const trained = prediction?.trained;
   const sceneLoading = sheetMode === "relief" && scene === undefined;
   const showRelief =
-    sheetMode === "relief" && !sceneLoading && Boolean(scene || (prediction?.trained && rasters.trained));
+    sheetMode === "relief" &&
+    !sceneLoading &&
+    !reliefFault &&
+    Boolean(scene || (prediction?.trained && rasters.trained));
   const baseline = prediction?.baseline;
   const gt = prediction?.ground_truth;
   // Prefer the locally recomputed values; they track the waterline.
@@ -382,7 +374,7 @@ export default function Workbench() {
       {/* The sheet and the things you ask it, side by side. */}
       <div className="grid gap-x-9 gap-y-6 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <figure className="m-0">
-          {prediction && (
+          {!booting && (
             <div className="mb-2 flex items-center justify-between">
               <div className="flex gap-1">
                 {(
@@ -406,6 +398,35 @@ export default function Workbench() {
                   </button>
                 ))}
               </div>
+              {sheetMode === "relief" && (
+                <button
+                  type="button"
+                  aria-pressed={paintConfidence && Boolean(rasters.trained)}
+                  disabled={!rasters.trained}
+                  title={
+                    rasters.trained
+                      ? "Paint the model's confidence onto the scene"
+                      : "Read the scene first: there is no answer to paint yet"
+                  }
+                  onClick={() => setPaintConfidence((on) => !on)}
+                  className={`sheet-label flex items-center gap-2 border px-2.5 py-1 transition ${
+                    !rasters.trained
+                      ? "cursor-not-allowed border-neat/50 opacity-40"
+                      : paintConfidence
+                        ? "border-ink !text-ink"
+                        : "border-neat hover:border-ink"
+                  }`}
+                >
+                  <span
+                    aria-hidden
+                    className="h-2.5 w-2.5 shrink-0 border border-ink/40"
+                    style={{
+                      background: paintConfidence && rasters.trained ? "#cfa63f" : "transparent",
+                    }}
+                  />
+                  Confidence
+                </button>
+              )}
             </div>
           )}
 
@@ -418,14 +439,8 @@ export default function Workbench() {
             {(booting || sceneLoading) && (
               <div className="absolute inset-0 flex items-center justify-center">
                 <LoadBar
-                  label={
-                    !prediction
-                      ? "Fetching the cached reading"
-                      : !rasters.trained
-                        ? "Decoding the confidence surface"
-                        : "Standing the scene up"
-                  }
-                  value={!prediction ? 0.25 : !rasters.trained ? 0.55 : 0.85}
+                  label={prediction ? "Decoding the confidence surface" : "Standing the scene up"}
+                  value={prediction && !rasters.trained ? 0.55 : 0.8}
                 />
               </div>
             )}
@@ -433,13 +448,14 @@ export default function Workbench() {
               <div className="absolute inset-0">
                 <TerrainView
                   photo={base}
-                  field={rasters.trained ?? null}
+                  field={paintConfidence ? (rasters.trained ?? null) : null}
                   scene={scene ?? null}
+                  onUnavailable={setReliefFault}
                   waterline={waterline}
                 />
               </div>
             )}
-            {showRelief && !booting && prediction && (
+            {showRelief && !booting && prediction && paintConfidence && (
               <span className="sheet-label pointer-events-none absolute right-2 top-2 bg-linen/85 px-2 py-0.5">
                 {scene ? "Colour is confidence" : "Elevation is confidence"}
               </span>
@@ -447,7 +463,9 @@ export default function Workbench() {
           </div>
           <figcaption className="sheet-label mt-2 flex justify-between">
             <span>
-              {showRelief
+              {reliefFault
+              ? `Relief view unavailable here (${reliefFault}); showing the flat sheet`
+              : showRelief
                 ? !prediction
                   ? "The scene stands ready. Read the scene to paint the answer onto it"
                   : scene

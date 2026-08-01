@@ -1,66 +1,66 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
+import { DRONE_ANCHORS, RING_ANCHORS, ROUTE_ANCHORS, type UV } from "@/lib/anchors";
 import type { Raster } from "@/lib/raster";
 import { decode } from "@/lib/raster";
-import LoadBar from "./LoadBar";
 import type { SceneAssets } from "@/lib/scene";
 import { loadScene } from "@/lib/scene";
-import { droneAnchor, ringAnchors, routeAnchors } from "@/lib/anchors";
+import LoadBar from "./LoadBar";
 import TerrainView, { type ScenePropSpec } from "./TerrainView";
 
 /**
- * One reading, three operating points.
+ * One reading, three jobs, three panels.
  *
- * The model is asked once; everything after that is policy. Each card sets a
- * different waterline on the same cached confidence surface, which is the
- * honest form of "what can you do with this": the applications differ in how
- * much doubt they can afford, not in the model that serves them.
+ * Each panel studies its own patch of the same scene with its own camera,
+ * device, and waterline: the model was asked once, and everything that
+ * differs between the panels is policy.
  */
 
 const READING = "/readings/uavid-000900-q04-s0.json";
 const PHOTO = "/examples/uavid-000900.png";
 const STEM = "uavid-000900";
+const ASPECT = 0.5625;
+
+const at = ([u, v]: UV) => ({ tx: (u - 0.5) * 0.92, ty: (0.5 - v) * ASPECT * 0.92 });
 
 const CASES = [
   {
     key: "drone",
     name: "Drone landing",
     waterline: 0.85,
-    line: "A landing decision tolerates no doubt. Raise the waterline and only ground the model is nearly certain of stays above water.",
+    line: "A landing decision tolerates no doubt. Only ground the model is nearly certain of stays above water, and the drone descends to it.",
+    props: { kind: "drone", anchors: DRONE_ANCHORS } as ScenePropSpec,
+    home: { yaw: -0.12, pitch: 0.78, zoom: 4.2, ...at(DRONE_ANCHORS[0]) },
     Icon: IconDrone,
   },
   {
     key: "site",
     name: "Site access",
     waterline: 0.5,
-    line: "Route heavy equipment across ground the model has never seen. This is the operating point the survey scored: 0.745 agreement.",
+    line: "Heavy equipment routed along the carriageway the model scored 0.745 against the survey. The ribbon is the confident ground.",
+    props: { kind: "route", anchors: ROUTE_ANCHORS } as ScenePropSpec,
+    home: { yaw: 0.12, pitch: 0.76, zoom: 3.1, ...at(ROUTE_ANCHORS[2]) },
     Icon: IconHardHat,
   },
   {
     key: "triage",
     name: "Disaster triage",
     waterline: 0.25,
-    line: "After a storm, cast a wide net and verify by eye. A low waterline surfaces every surface worth a second look.",
+    line: "After a storm, cast a wide net: beacons sweep every candidate sector a low waterline surfaces, and a crew verifies by eye.",
+    props: { kind: "rings", anchors: RING_ANCHORS } as ScenePropSpec,
+    home: { yaw: -0.3, pitch: 0.95, zoom: 1.7 },
     Icon: IconBeacon,
   },
 ] as const;
-
-function prefersStill() {
-  return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
 
 export default function UseCases() {
   const [photo, setPhoto] = useState<HTMLImageElement | null>(null);
   const [field, setField] = useState<Raster | null>(null);
   const [scene, setScene] = useState<SceneAssets | null | undefined>(undefined);
   const [failed, setFailed] = useState(false);
-  const [active, setActive] = useState(0);
-  const [waterline, setWaterline] = useState<number>(CASES[0].waterline);
-  const anim = useRef<number | null>(null);
-  const cycle = useRef<number | null>(null);
-  const touched = useRef(false);
+  const [reliefFault, setReliefFault] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -83,72 +83,12 @@ export default function UseCases() {
     void loadScene(STEM).then((assets) => live && setScene(assets));
     return () => {
       live = false;
-      if (anim.current != null) cancelAnimationFrame(anim.current);
-      if (cycle.current != null) window.clearTimeout(cycle.current);
     };
   }, []);
-
-  const glideTo = useCallback((target: number) => {
-    if (anim.current != null) cancelAnimationFrame(anim.current);
-    if (prefersStill()) {
-      setWaterline(target);
-      return;
-    }
-    const start = performance.now();
-    let from: number | null = null;
-    const step = (now: number) => {
-      setWaterline((current: number) => {
-        if (from == null) from = current;
-        const t = Math.min(1, (now - start) / 900);
-        const e = 1 - Math.pow(1 - t, 3);
-        if (t < 1) anim.current = requestAnimationFrame(step);
-        return from + (target - from) * e;
-      });
-    };
-    anim.current = requestAnimationFrame(step);
-  }, []);
-
-  const pick = useCallback(
-    (index: number, byUser: boolean) => {
-      if (byUser) touched.current = true;
-      setActive(index);
-      glideTo(CASES[index].waterline);
-    },
-    [glideTo],
-  );
-
-  // The cards take turns until the visitor chooses one.
-  useEffect(() => {
-    if (!field || prefersStill()) return;
-    const tick = () => {
-      cycle.current = window.setTimeout(() => {
-        if (!touched.current && !document.hidden) {
-          setActive((i) => {
-            const next = (i + 1) % CASES.length;
-            glideTo(CASES[next].waterline);
-            return next;
-          });
-        }
-        if (!touched.current) tick();
-      }, 5200);
-    };
-    tick();
-    return () => {
-      if (cycle.current != null) window.clearTimeout(cycle.current);
-    };
-  }, [field, glideTo]);
 
   if (failed) return null;
 
   const loading = !field || scene === undefined;
-
-  const sceneProps: ScenePropSpec = !field
-    ? null
-    : CASES[active].key === "drone"
-      ? { kind: "drone", anchors: droneAnchor(field) }
-      : CASES[active].key === "site"
-        ? { kind: "route", anchors: routeAnchors(field) }
-        : { kind: "rings", anchors: ringAnchors(field) };
 
   return (
     <section className="mt-14">
@@ -160,62 +100,65 @@ export default function UseCases() {
         </p>
       </div>
 
-      <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_21rem]">
-        <div className="relative border border-ink/25 bg-mylar" style={{ aspectRatio: "16 / 9" }}>
-          {loading ? (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <LoadBar
-                label={!field ? "Fetching the cached reading" : "Standing the scene up"}
-                value={!field ? 0.35 : 0.75}
-              />
-            </div>
-          ) : (
-            <>
-              <div className="absolute inset-0">
-                <TerrainView
-                  photo={photo}
-                  field={field}
-                  scene={scene ?? null}
-                  waterline={waterline}
-                  sceneProps={sceneProps}
-                />
-              </div>
-              <div className="pointer-events-none absolute bottom-2 left-2 flex items-baseline gap-3 bg-linen/85 px-2 py-1">
-                <span className="sheet-label !text-ink">{CASES[active].name}</span>
-                <span className="datum text-[11px] text-faint">
-                  waterline {waterline.toFixed(2)}. Drag to tilt, scroll to zoom in on the model
+      {loading ? (
+        <div
+          className="mt-6 flex items-center justify-center border border-ink/25 bg-mylar"
+          style={{ aspectRatio: "3 / 1" }}
+        >
+          <LoadBar
+            label={!field ? "Fetching the cached reading" : "Standing the scene up"}
+            value={!field ? 0.35 : 0.75}
+          />
+        </div>
+      ) : (
+        <div className="mt-6 grid gap-5 md:grid-cols-3">
+          {CASES.map(({ key, name, waterline, line, props, home, Icon }) => (
+            <figure key={key} className="group m-0">
+              <div
+                className="relative overflow-hidden border border-ink/25 bg-mylar transition group-hover:border-ink"
+                style={{ aspectRatio: "4 / 3" }}
+              >
+                {reliefFault ? (
+                  <img
+                    src={PHOTO}
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-cover opacity-80"
+                  />
+                ) : (
+                  <div className="absolute inset-0">
+                    <TerrainView
+                      photo={photo}
+                      field={field}
+                      scene={scene ?? null}
+                      waterline={waterline}
+                      sceneProps={props}
+                      home={home}
+                      onUnavailable={setReliefFault}
+                    />
+                  </div>
+                )}
+                <span className="datum pointer-events-none absolute bottom-1.5 right-2 bg-linen/85 px-1.5 py-0.5 text-[10px] text-faint">
+                  waterline {waterline.toFixed(2)}
                 </span>
               </div>
-            </>
-          )}
-        </div>
-
-        <ul className="flex flex-col gap-1.5">
-          {CASES.map(({ key, name, line, waterline: w, Icon }, i) => (
-            <li key={key}>
-              <button
-                type="button"
-                aria-pressed={i === active}
-                onClick={() => pick(i, true)}
-                className={`w-full border px-4 py-3 text-left transition ${
-                  i === active ? "border-ink bg-mylar/50" : "border-neat hover:border-ink"
-                }`}
-              >
-                <span className="flex items-center gap-2.5">
+              <figcaption className="mt-2.5">
+                <span className="flex items-center gap-2">
                   <Icon />
                   <span className="sheet-label !text-ink">{name}</span>
-                  <span className="datum ml-auto text-[10px] text-faint">{w.toFixed(2)}</span>
                 </span>
-                <span className="mt-1.5 block text-xs leading-relaxed text-faint">{line}</span>
-              </button>
-            </li>
+                <p className="mt-1.5 text-xs leading-relaxed text-faint">{line}</p>
+              </figcaption>
+            </figure>
           ))}
-          <li className="mt-1 px-1 text-[11px] leading-relaxed text-faint">
-            The same photograph and the same single forward pass serve all three. Retraining is
-            replaced by choosing how much confidence the job demands.
-          </li>
-        </ul>
-      </div>
+        </div>
+      )}
+      {!loading && (
+        <p className="mt-4 text-[11px] leading-relaxed text-faint">
+          {reliefFault
+            ? `Three panels, one photograph, one forward pass. The relief view is unavailable here (${reliefFault}), so the panels show the photograph flat.`
+            : "Three panels, one photograph, one forward pass. Drag any panel to tilt it; scroll to zoom in on the device."}
+        </p>
+      )}
     </section>
   );
 }
