@@ -296,7 +296,7 @@ export default function Workbench() {
           if (!waking || n === WAKE_ATTEMPTS) {
             throw new Error(
               waking
-                ? "The GPU did not finish waking up. It usually takes about a minute; try again shortly."
+                ? "The GPU did not finish waking up. It usually takes a few minutes; try again shortly."
                 : lastError,
             );
           }
@@ -624,8 +624,7 @@ export default function Workbench() {
                 </p>
                 {attempt > 1 && (
                   <p className="mt-1 text-[11px] leading-relaxed text-faint">
-                    The GPU sleeps when idle and takes about a minute to come back. This keeps
-                    asking for you.
+                    The GPU sleeps when idle and takes a few minutes to come back. Automated retry enabled.
                   </p>
                 )}
               </div>
