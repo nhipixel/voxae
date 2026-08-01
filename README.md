@@ -20,6 +20,7 @@ answers together.
 The **[Hugging Face Space](https://huggingface.co/spaces/nhibuilds/voxae)** runs both models side by side
 on one query, and is the API the app calls.
 
+![Voxae demo](assets/demo_v1_dark.gif)
 ![Voxae demo](assets/demo_v1.gif)
 
 ## Why
