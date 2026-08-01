@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { buildProps, type PropKind } from "@/lib/props";
 import type { SceneAssets, SceneGeometry } from "@/lib/scene";
 import { buildSceneGeometry } from "@/lib/scene";
 import type { FieldRaster } from "@/lib/terrain3d";
+import type { ViewState } from "@/lib/terrain3d";
 import { HOME_VIEW, TerrainRenderer, smoothField } from "@/lib/terrain3d";
 
 export type ScenePropSpec = { kind: PropKind; anchors: [number, number][] } | null;
@@ -22,6 +23,11 @@ type Props = {
   ambient?: boolean;
   /** Animated illustration lines, anchored in texture coordinates. */
   sceneProps?: ScenePropSpec;
+  /** Overrides for the resting camera, for panels that study one patch. */
+  home?: Partial<Pick<ViewState, "yaw" | "pitch" | "zoom" | "tx" | "ty">>;
+  /** Reports that the relief cannot be drawn here, with a human reason, so a
+      parent can fall back instead of showing an empty rectangle. */
+  onUnavailable?: (reason: string) => void;
   className?: string;
 };
 
@@ -44,13 +50,18 @@ export default function TerrainView({
   waterline,
   ambient = false,
   sceneProps = null,
+  home,
+  onUnavailable,
   className = "",
 }: Props) {
+  const homeView = { ...HOME_VIEW, tx: 0, ty: 0, ...home };
+  // Bumped when the GPU hands the context back, to rebuild everything on it.
+  const [glEpoch, setGlEpoch] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const renderer = useRef<TerrainRenderer | null>(null);
   const geometry = useRef<SceneGeometry | null>(null);
   const propSpec = useRef<ScenePropSpec>(null);
-  const view = useRef({ ...HOME_VIEW, waterline });
+  const view = useRef({ ...homeView, waterline });
   const raf = useRef<number | null>(null);
   const anim = useRef<number | null>(null);
   const drift = useRef<number | null>(null);
@@ -82,19 +93,47 @@ export default function TerrainView({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    // A browser may take the context back at any time, and does so when a
+    // page opens more than its budget. Accepting the loss event is what
+    // allows a restore to be offered at all.
+    const onLost = (e: Event) => {
+      e.preventDefault();
+      renderer.current = null;
+      canvas.dataset.glLost = "1";
+    };
+    const onRestored = () => {
+      canvas.dataset.glLost = "";
+      setGlEpoch((n) => n + 1);
+    };
+    canvas.addEventListener("webglcontextlost", onLost);
+    canvas.addEventListener("webglcontextrestored", onRestored);
+
     let r: TerrainRenderer | null = null;
     try {
       r = new TerrainRenderer(canvas);
     } catch (e) {
-      // No WebGL: the parent keeps the flat sheet available. The reason is
-      // recorded on the element so a blank view is diagnosable in the field.
-      canvas.dataset.glError = e instanceof Error ? e.message : String(e);
-      return;
+      // No WebGL: say so out loud. A silent return leaves an empty rectangle
+      // that looks identical to a bug.
+      const reason = e instanceof Error ? e.message : String(e);
+      canvas.dataset.glError = reason;
+      onUnavailable?.(reason);
+      return () => {
+        canvas.removeEventListener("webglcontextlost", onLost);
+        canvas.removeEventListener("webglcontextrestored", onRestored);
+      };
     }
     canvas.dataset.glError = "";
     renderer.current = r;
 
     const parent = canvas.parentElement!;
+    // Size from the live box immediately. Waiting on the observer's first
+    // delivery leaves the canvas at its 300x150 default, and a tab that is
+    // not compositing never delivers at all.
+    const first = parent.getBoundingClientRect();
+    if (first.width > 0 && first.height > 0) {
+      r.resize(first.width, first.height, Math.min(2, window.devicePixelRatio || 1));
+    }
     const observer = new ResizeObserver(() => {
       const rect = parent.getBoundingClientRect();
       canvas.dataset.observed = `${Math.round(rect.width)}x${Math.round(rect.height)}`;
@@ -119,7 +158,19 @@ export default function TerrainView({
       return canvas.toDataURL("image/jpeg", 0.6);
     };
 
+    // If nothing has been painted a beat after mounting, the relief is not
+    // going to appear on its own; hand back to the flat sheet.
+    const watchdog = window.setTimeout(() => {
+      const c = canvasRef.current;
+      if (c && Number(c.dataset.frames ?? 0) === 0) {
+        onUnavailable?.("the relief view drew no frames");
+      }
+    }, 2500);
+
     return () => {
+      canvas.removeEventListener("webglcontextlost", onLost);
+      canvas.removeEventListener("webglcontextrestored", onRestored);
+      window.clearTimeout(watchdog);
       observer.disconnect();
       if (raf.current != null) cancelAnimationFrame(raf.current);
       if (anim.current != null) cancelAnimationFrame(anim.current);
@@ -129,15 +180,24 @@ export default function TerrainView({
       }
       r!.dispose();
       renderer.current = null;
+      // Release the GPU context only once the element is genuinely gone. A
+      // StrictMode remount reuses this same canvas and needs its context; a
+      // real unmount must hand the context back, or the page's context budget
+      // drains and later views get nothing at all.
+      const goneCanvas = canvas;
+      const goneRenderer = r!;
+      window.setTimeout(() => {
+        if (!goneCanvas.isConnected) goneRenderer.loseContext();
+      }, 0);
     };
-  }, [draw, invalidate]);
+  }, [draw, invalidate, onUnavailable, glEpoch]);
 
   useEffect(() => {
     if (photo && renderer.current) {
       renderer.current.setPhoto(photo);
       invalidate();
     }
-  }, [photo, invalidate]);
+  }, [photo, invalidate, glEpoch]);
 
   /** A slow turn, running until the visitor interacts or the tab hides. */
   const startDrift = useCallback(() => {
@@ -155,7 +215,7 @@ export default function TerrainView({
         // A pendulum across the photographed side: a full orbit would parade
         // the sheared back of every building.
         phase += ((now - lastT) / 1000) * (ambient ? 0.22 : 0.07);
-        view.current.yaw = HOME_VIEW.yaw + Math.sin(phase) * 0.42;
+        view.current.yaw = homeView.yaw + Math.sin(phase) * 0.42;
         draw();
       }
       lastT = now;
@@ -198,7 +258,7 @@ export default function TerrainView({
 
     if (anim.current != null) cancelAnimationFrame(anim.current);
     if (ambient || prefersStill()) {
-      view.current = { ...view.current, ...HOME_VIEW, pitch: ambient ? 0.92 : HOME_VIEW.pitch };
+      view.current = { ...view.current, ...homeView, pitch: ambient ? home?.pitch ?? 0.92 : homeView.pitch };
       invalidate();
       startDrift();
       return;
@@ -208,15 +268,24 @@ export default function TerrainView({
     const step = (now: number) => {
       const t = Math.min(1, (now - start) / 1100);
       const e = 1 - Math.pow(1 - t, 3);
-      view.current.yaw = from.yaw + (HOME_VIEW.yaw - from.yaw) * e;
-      view.current.pitch = from.pitch + (HOME_VIEW.pitch - from.pitch) * e;
+      view.current.yaw = from.yaw + (homeView.yaw - from.yaw) * e;
+      view.current.pitch = from.pitch + (homeView.pitch - from.pitch) * e;
       draw();
       if (t < 1) anim.current = requestAnimationFrame(step);
       else startDrift();
     };
-    view.current = { ...view.current, ...from, zoom: HOME_VIEW.zoom };
+    view.current = { ...view.current, ...from, zoom: homeView.zoom };
     anim.current = requestAnimationFrame(step);
-  }, [scene, field, ambient, draw, invalidate, startDrift]);
+    // A guarantee independent of frame callbacks: if the entrance has not
+    // started shortly, settle straight into the resting view.
+    window.setTimeout(() => {
+      const canvasNow = canvasRef.current;
+      if (!canvasNow || Number(canvasNow.dataset.frames ?? 0) > 0) return;
+      if (anim.current != null) cancelAnimationFrame(anim.current);
+      view.current = { ...view.current, ...homeView };
+      draw();
+    }, 700);
+  }, [scene, field, ambient, draw, invalidate, startDrift, glEpoch]);
 
   // Props animate on their own clock, independent of camera drift.
   const propTick = useRef<number | null>(null);
@@ -286,7 +355,7 @@ export default function TerrainView({
       invalidate();
     };
     const home = () => {
-      view.current = { ...view.current, ...HOME_VIEW };
+      view.current = { ...view.current, ...homeView };
       invalidate();
     };
 

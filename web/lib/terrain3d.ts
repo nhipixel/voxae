@@ -20,6 +20,9 @@ export type ViewState = {
   pitch: number;
   zoom: number;
   waterline: number;
+  /** Orbit target offset in world units, for views that study one patch. */
+  tx?: number;
+  ty?: number;
 };
 
 export const HOME_VIEW: Omit<ViewState, "waterline"> = {
@@ -87,7 +90,7 @@ void main() {
 
   vec3 photo = texture2D(uPhoto, vUv).rgb;
   float back = smoothstep(0.06, 0.22, hB - hT);
-  photo = mix(photo, vec3(0.70, 0.71, 0.66), back * 0.75);
+  photo = mix(photo, vec3(0.20, 0.23, 0.25), back * 0.78);
   if (uHasField < 0.5) {
     gl_FragColor = vec4(photo * light, 1.0);
     return;
@@ -99,16 +102,19 @@ void main() {
     vec3 mid  = vec3(0.788, 0.698, 0.494);
     vec3 high = vec3(0.957, 0.937, 0.886);
     vec3 ramp = t < 0.5 ? mix(low, mid, t * 2.0) : mix(mid, high, t * 2.0 - 1.0);
-    col = mix(photo, ramp, mix(0.40, 0.26, uUseDepth)) * light;
+    col = mix(photo, ramp, mix(0.46, 0.44, uUseDepth)) * light;
+    // A little emission so the answer reads as painted light on a night
+    // chart rather than a lighter patch of photograph.
+    col += ramp * 0.12 * (0.35 + 0.65 * t);
 
     float d = abs(fract(vP * 10.0) - 0.5);
     float line = 1.0 - smoothstep(0.0, 0.14, d);
-    col = mix(col, vec3(0.29, 0.204, 0.086), line * 0.42);
+    col = mix(col, vec3(0.16, 0.11, 0.04), line * 0.6);
 
     float foam = 1.0 - smoothstep(0.0, 0.018, vP - uWater);
-    col = mix(col, vec3(0.94, 0.95, 0.93), foam * 0.75);
+    col = mix(col, vec3(0.96, 0.97, 0.95), foam * 0.9);
   } else {
-    col = photo * vec3(0.42, 0.52, 0.60) * light;
+    col = photo * vec3(0.30, 0.42, 0.55) * light * 0.82;
   }
   gl_FragColor = vec4(col, 1.0);
 }`;
@@ -254,13 +260,25 @@ export class TerrainRenderer {
   ready = false;
 
   constructor(private canvas: HTMLCanvasElement) {
-    const gl = canvas.getContext("webgl", {
+    const attrs: WebGLContextAttributes = {
       antialias: true,
       alpha: true,
       // Kept on so the view can be read back for export and verification.
       preserveDrawingBuffer: true,
-    });
-    if (!gl) throw new Error("webgl unavailable");
+      // Survive a busy machine rather than failing outright.
+      failIfMajorPerformanceCaveat: false,
+    };
+    // A browser can refuse "webgl" while still granting webgl2 (a superset of
+    // everything used here), and older ones only answer to the experimental
+    // name. Try all three before giving up.
+    const gl = (canvas.getContext("webgl", attrs) ??
+      canvas.getContext("webgl2", attrs) ??
+      canvas.getContext("experimental-webgl", attrs)) as WebGLRenderingContext | null;
+    if (!gl) {
+      throw new Error(
+        "webgl unavailable: the browser refused a 3D context. Hardware acceleration may be off, or too many contexts are already open on this page",
+      );
+    }
     this.gl = gl;
     this.terrain = program(gl, TERRAIN_VS, TERRAIN_FS);
     this.scene = program(gl, SCENE_VS, TERRAIN_FS);
@@ -524,7 +542,7 @@ export class TerrainRenderer {
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-    const target = [0, 0, HEIGHT_SCALE * 0.35];
+    const target = [view.tx ?? 0, view.ty ?? 0, HEIGHT_SCALE * 0.35];
     const dist = 1.42 / view.zoom;
     const eye = [
       target[0] + dist * Math.cos(view.pitch) * Math.sin(view.yaw),
@@ -577,7 +595,7 @@ export class TerrainRenderer {
     // Skirt.
     gl.useProgram(this.flat);
     gl.uniformMatrix4fv(gl.getUniformLocation(this.flat, "uMvp"), false, mvp);
-    gl.uniform4f(gl.getUniformLocation(this.flat, "uColor"), 0.726, 0.745, 0.699, 1.0);
+    gl.uniform4f(gl.getUniformLocation(this.flat, "uColor"), 0.17, 0.20, 0.22, 1.0);
     const aPos = gl.getAttribLocation(this.flat, "aPos");
     const aShade = gl.getAttribLocation(this.flat, "aShade");
     gl.bindBuffer(gl.ARRAY_BUFFER, this.skirtBuffer);
@@ -598,7 +616,7 @@ export class TerrainRenderer {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.depthMask(false);
-    gl.uniform4f(gl.getUniformLocation(this.flat, "uColor"), 0.196, 0.435, 0.565, 0.44);
+    gl.uniform4f(gl.getUniformLocation(this.flat, "uColor"), 0.20, 0.50, 0.64, 0.42);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.waterBuffer);
     gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 16, 0);
     gl.vertexAttribPointer(aShade, 1, gl.FLOAT, false, 16, 12);
@@ -658,9 +676,21 @@ export class TerrainRenderer {
     gl.bufferData(gl.ARRAY_BUFFER, water, gl.STATIC_DRAW);
   }
 
+  /**
+   * Hands the GPU context back.
+   *
+   * Browsers cap the number of live WebGL contexts per page, so a context
+   * that is never released leaks until every later request returns null.
+   * Only call this once the canvas is genuinely gone: a StrictMode remount
+   * reuses the same element, and a lost context stays lost.
+   */
+  loseContext() {
+    this.gl.getExtension("WEBGL_lose_context")?.loseContext();
+  }
+
   dispose() {
-    // Free objects but keep the context alive: React StrictMode remounts the
-    // component on the same canvas, and a killed context stays killed.
+    // Free objects but keep the context alive; the caller decides whether the
+    // canvas is really gone and calls loseContext separately.
     const gl = this.gl;
     gl.deleteProgram(this.terrain);
     gl.deleteProgram(this.flat);
