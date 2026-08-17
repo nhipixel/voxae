@@ -18,16 +18,25 @@ from voxae.model.sam2_head import Sam2DecoderHead
 
 
 class SegProjector(nn.Module):
-    """Two-layer MLP from LLM hidden size into SAM2's prompt-embedding space."""
+    """MLP from LLM hidden size into SAM2's prompt-embedding space.
 
-    def __init__(self, llm_hidden: int, prompt_dim: int, dropout: float = 0.0):
+    ``layers`` counts Linear layers: 1 is a bare projection, 2 is the default
+    single hidden block, and higher values stack further blocks at the LLM
+    width. At 2 the module names match what earlier checkpoints saved, so
+    depth stays configurable without invalidating them.
+    """
+
+    def __init__(
+        self, llm_hidden: int, prompt_dim: int, dropout: float = 0.0, layers: int = 2
+    ):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(llm_hidden, llm_hidden),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(llm_hidden, prompt_dim),
-        )
+        if layers < 1:
+            raise ValueError(f"projector needs at least one layer, got {layers}")
+        stack: list[nn.Module] = []
+        for _ in range(layers - 1):
+            stack += [nn.Linear(llm_hidden, llm_hidden), nn.GELU(), nn.Dropout(dropout)]
+        stack.append(nn.Linear(llm_hidden, prompt_dim))
+        self.net = nn.Sequential(*stack)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # The backbone runs in bfloat16 while this MLP stays in full precision:
@@ -48,11 +57,12 @@ class VoxaeSegModel(nn.Module):
         ce_weight: float = 1.0,
         bce_weight: float = 2.0,
         dice_weight: float = 0.5,
+        projector_layers: int = 2,
     ):
         super().__init__()
         self.backbone = backbone
         self.sam_head = sam_head
-        self.projector = SegProjector(llm_hidden, sam_head.prompt_dim)
+        self.projector = SegProjector(llm_hidden, sam_head.prompt_dim, layers=projector_layers)
         self.seg_token_id = seg_token_id
         self.ce_weight = ce_weight
         self.bce_weight = bce_weight

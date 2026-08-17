@@ -51,6 +51,42 @@ def test_projector_accepts_lower_precision_input(sam_head):
     assert out.shape == (3, sam_head.prompt_dim)
 
 
+@pytest.mark.parametrize("layers", [1, 2, 3])
+def test_projector_depth_maps_to_prompt_dim(sam_head, layers):
+    proj = SegProjector(llm_hidden=32, prompt_dim=sam_head.prompt_dim, layers=layers)
+    assert len([m for m in proj.net if isinstance(m, torch.nn.Linear)]) == layers
+    assert proj(torch.randn(2, 32)).shape == (2, sam_head.prompt_dim)
+
+
+def test_projector_at_default_depth_keeps_its_parameter_names(sam_head):
+    """Depth is configurable, but the default must still load old checkpoints."""
+    names = dict(SegProjector(llm_hidden=32, prompt_dim=sam_head.prompt_dim).named_parameters())
+    assert set(names) == {"net.0.weight", "net.0.bias", "net.3.weight", "net.3.bias"}
+
+
+def test_projector_rejects_zero_layers(sam_head):
+    with pytest.raises(ValueError, match="at least one layer"):
+        SegProjector(llm_hidden=32, prompt_dim=sam_head.prompt_dim, layers=0)
+
+
+def test_single_layer_projector_trains_through_the_bridge(sam_head, tiny_lm):
+    """The 1-layer ablation arm has to produce gradients, not just build."""
+    model = VoxaeSegModel(
+        tiny_lm, sam_head, seg_token_id=SEG, llm_hidden=32, projector_layers=1
+    )
+    size = sam_head.input_image_size
+    with torch.no_grad():
+        feats = sam_head.encode_images(torch.randn(1, 3, size, size))
+    ids = torch.tensor([[1, 2, SEG]])
+    gt = torch.zeros(1, 32, 32)
+    gt[:, :16] = 1.0
+
+    out = model(ids, torch.ones_like(ids), feats, gt_masks=gt)
+    out["loss"].backward()
+    grads = [p.grad for p in model.projector.parameters()]
+    assert all(g is not None and torch.isfinite(g).all() for g in grads)
+
+
 def test_encode_decode_shapes(sam_head):
     size = sam_head.input_image_size
     feats = sam_head.encode_images(torch.randn(2, 3, size, size))

@@ -63,6 +63,9 @@ class VoxaeSegPipeline:
             sam_head,
             seg_token_id=seg_token_id,
             llm_hidden=backbone.config.get_text_config().hidden_size,
+            # Depth changes the projector's parameter names, so it has to be
+            # read back from the config the checkpoint carries.
+            projector_layers=cfg.get("projector_layers", 2),
         )
 
         current = dict(model.named_parameters())
