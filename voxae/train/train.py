@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import random
 import shutil
 import time
 from pathlib import Path
@@ -54,8 +55,25 @@ def build_model(cfg: dict, device: torch.device):
         ce_weight=cfg.get("ce_weight", 1.0),
         bce_weight=cfg.get("bce_weight", 2.0),
         dice_weight=cfg.get("dice_weight", 0.5),
+        projector_layers=cfg.get("projector_layers", 2),
     )
     return model.to(device), processor
+
+
+def seed_everything(seed: int) -> torch.Generator:
+    """Seed the run and return the generator the loader shuffles with.
+
+    Two runs that differ only in a loss weight are comparable only if they see
+    the same samples in the same order. DataLoader(shuffle=True) draws from the
+    global RNG, so without this an ablation measures the data order as much as
+    the change under test.
+    """
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    return generator
 
 
 def lr_lambda(step: int, warmup: int, total: int) -> float:
@@ -103,6 +121,7 @@ def train(config_path: Path, fresh: bool = False) -> None:
     out_dir = Path(cfg["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    generator = seed_everything(cfg.get("seed", 0))
     model, processor = build_model(cfg, device)
     samples = load_samples(Path(cfg["train_jsonl"]), split=cfg.get("split", "train"))
     if cfg.get("limit"):
@@ -119,6 +138,7 @@ def train(config_path: Path, fresh: bool = False) -> None:
         shuffle=True,
         collate_fn=collator,
         num_workers=cfg.get("num_workers", 0),
+        generator=generator,
     )
 
     steps_total = cfg.get("max_steps", len(loader) * cfg.get("epochs", 1))
@@ -150,6 +170,11 @@ def train(config_path: Path, fresh: bool = False) -> None:
         wandb.init(project=cfg["wandb_project"], config=cfg, resume="allow")
 
     model.train()
+    # Dropping the text supervision means withholding the labels, not zeroing
+    # the weight. At weight 0 the CE term still puts a zero gradient on lm_head,
+    # and AdamW decays any parameter whose gradient merely exists, so the arm
+    # would measure weight decay as much as it measures the loss term.
+    supervise_text = cfg.get("supervise_text", True)
     log_path = out_dir / "train_log.jsonl"
     t0 = time.time()
     while step < steps_total:
@@ -167,7 +192,7 @@ def train(config_path: Path, fresh: bool = False) -> None:
                 attention_mask=batch["attention_mask"],
                 sam_features=sam_feats,
                 gt_masks=gt,
-                labels=batch.get("labels"),
+                labels=batch.get("labels") if supervise_text else None,
                 **{
                     k: v
                     for k, v in batch.items()

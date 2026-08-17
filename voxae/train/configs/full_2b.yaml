@@ -23,6 +23,9 @@ epochs: 2
 lr: 2.0e-4
 warmup_steps: 100
 max_length: 512
+# Stated rather than left to the global RNG, so a rerun draws the same order.
+# The checkpoint the README's numbers came from predates this and was unseeded.
+seed: 0
 
 ce_weight: 1.0
 bce_weight: 2.0
