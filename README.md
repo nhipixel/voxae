@@ -83,8 +83,11 @@ Held-out test split, 306 samples, both predictors on identical inputs.
 
 | | trained | zero-shot |
 |---|---|---|
-| latency / query | **0.25 s** | 20.8 s |
+| latency / query | **0.247 s** | 21.010 s |
+| ratio | **85x** | |
 | unparseable responses | **0** | 1 / 306 |
+
+Latency is the mean over all 306 per-sample records.
 
 Inference is one teacher-forced forward pass with no autoregressive generation. The baseline pays an API round trip plus a full SAM encode, and can emit output that fails to parse at all, a failure mode an embedding handoff does not have.
 
