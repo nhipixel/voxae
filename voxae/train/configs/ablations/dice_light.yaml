@@ -1,0 +1,42 @@
+# Ablation: Dice at 0.5 instead of 2.0.
+#
+# 0.5 is the module default and what the 7B config uses; the shipped 2B run
+# raised it to 2.0. The reasoning recorded in smoke_2b.yaml is that on sparse
+# targets a background-only prediction scores well under BCE and near 1.0 under
+# Dice, so a light Dice term makes predicting nothing cheaper than predicting an
+# imperfect mask. This arm is what tests that claim rather than asserting it.
+backbone_id: Qwen/Qwen2-VL-2B-Instruct
+sam2_id: facebook/sam2.1-hiera-small
+load_in_4bit: false
+dtype: bfloat16
+lora: true
+lora_settings:
+  r: 16
+  alpha: 32
+
+train_jsonl: data/processed/annotations/voxae_reason.jsonl
+data_root: data
+split: train
+
+# max_steps counts micro-batches and overrides epochs, so every arm sees the
+# same first 800 samples of the same shuffled order. Warmup is 10% of the 400
+# optimizer steps, scaled up from the full run's 4% because a short run spends
+# proportionally longer getting off the ground.
+batch_size: 1
+grad_accum: 2
+max_steps: 800
+lr: 2.0e-4
+warmup_steps: 40
+max_length: 512
+seed: 0
+
+ce_weight: 1.0
+bce_weight: 2.0
+dice_weight: 0.5
+train_mask_decoder: true
+projector_layers: 2
+supervise_text: true
+
+output_dir: outputs/ablations/dice_light
+log_every: 25
+save_every: 400

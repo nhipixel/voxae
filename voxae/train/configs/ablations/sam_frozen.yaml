@@ -1,0 +1,41 @@
+# Ablation: freeze SAM's mask decoder.
+#
+# The justification for unfreezing it is that a projected LLM hidden state is
+# not a point, a box, or a mask, so the prompt distribution is out of the
+# decoder's original domain. If a frozen decoder matches the control, that
+# justification is wrong and the bridge alone is doing the adaptation.
+backbone_id: Qwen/Qwen2-VL-2B-Instruct
+sam2_id: facebook/sam2.1-hiera-small
+load_in_4bit: false
+dtype: bfloat16
+lora: true
+lora_settings:
+  r: 16
+  alpha: 32
+
+train_jsonl: data/processed/annotations/voxae_reason.jsonl
+data_root: data
+split: train
+
+# max_steps counts micro-batches and overrides epochs, so every arm sees the
+# same first 800 samples of the same shuffled order. Warmup is 10% of the 400
+# optimizer steps, scaled up from the full run's 4% because a short run spends
+# proportionally longer getting off the ground.
+batch_size: 1
+grad_accum: 2
+max_steps: 800
+lr: 2.0e-4
+warmup_steps: 40
+max_length: 512
+seed: 0
+
+ce_weight: 1.0
+bce_weight: 2.0
+dice_weight: 2.0
+train_mask_decoder: false
+projector_layers: 2
+supervise_text: true
+
+output_dir: outputs/ablations/sam_frozen
+log_every: 25
+save_every: 400

@@ -1,0 +1,45 @@
+# Ablation: does the language-modelling loss earn its place?
+#
+# The assistant response is a fixed string, so CE cannot be teaching the model
+# what to say. The open question is whether it still helps, by keeping the new
+# <SEG> embedding row and its lm_head row supervised and anchoring the LoRA
+# adapters near the backbone's original distribution.
+#
+# supervise_text: false withholds the labels rather than setting ce_weight to 0,
+# so lm_head gets no gradient at all and AdamW leaves it alone. Zeroing the
+# weight would leave a zero gradient in place, which weight decay still acts on.
+backbone_id: Qwen/Qwen2-VL-2B-Instruct
+sam2_id: facebook/sam2.1-hiera-small
+load_in_4bit: false
+dtype: bfloat16
+lora: true
+lora_settings:
+  r: 16
+  alpha: 32
+
+train_jsonl: data/processed/annotations/voxae_reason.jsonl
+data_root: data
+split: train
+
+# max_steps counts micro-batches and overrides epochs, so every arm sees the
+# same first 800 samples of the same shuffled order. Warmup is 10% of the 400
+# optimizer steps, scaled up from the full run's 4% because a short run spends
+# proportionally longer getting off the ground.
+batch_size: 1
+grad_accum: 2
+max_steps: 800
+lr: 2.0e-4
+warmup_steps: 40
+max_length: 512
+seed: 0
+
+ce_weight: 1.0
+bce_weight: 2.0
+dice_weight: 2.0
+train_mask_decoder: true
+projector_layers: 2
+supervise_text: false
+
+output_dir: outputs/ablations/no_ce
+log_every: 25
+save_every: 400
