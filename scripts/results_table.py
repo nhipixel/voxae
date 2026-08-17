@@ -28,17 +28,47 @@ LABELS = {
 }
 
 
+def from_records(report: dict, path: Path) -> dict:
+    """Fill in what the per-sample records know and the aggregate does not.
+
+    Reports written before the per-family counts existed carry none, and the
+    latency mean in those reports covers only the samples the final session
+    recomputed, so a resumed run understated or overstated it. The records hold
+    every sample either way, so they are the better source for both.
+    """
+    records_path = path.with_suffix("").with_suffix(".records.jsonl")
+    if not records_path.exists():
+        return report
+    records = [
+        json.loads(line)
+        for line in records_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if not records:
+        return report
+
+    counts: Counter = Counter(all=len(records))
+    counts.update(r["family"] for r in records)
+    for fam, n in counts.items():
+        report.setdefault(f"n_{fam}", n)
+    report["latency_s_mean"] = round(sum(r["latency_s"] for r in records) / len(records), 3)
+    report["_latency_from_records"] = True
+    return report
+
+
 def load(results_dir: Path) -> list[dict]:
     """Every report in a directory, newest filename last."""
     out = []
     for path in sorted(results_dir.glob("eval_*.json")):
+        if path.name.endswith(".records.json"):
+            continue
         try:
             report = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             print(f"  ! {path.name} is not valid JSON; skipped")
             continue
         report["_path"] = path
-        out.append(report)
+        out.append(from_records(report, path))
     return out
 
 
@@ -92,6 +122,13 @@ def headline(trained: dict | None, zero: dict | None, split: str) -> list[str]:
         f"| unparseable responses | {fail_t if fail_t is not None else '-'} / {total} "
         f"| {fail_z if fail_z is not None else '-'} / {total} |"
     )
+    if (trained or {}).get("_latency_from_records") or (zero or {}).get("_latency_from_records"):
+        lines += [
+            "",
+            "Latency is the mean over every per-sample record. The aggregate field in a "
+            "report written before this fix covered only the samples its final session "
+            "recomputed, which understates or overstates a resumed run.",
+        ]
     if lat_t and lat_z:
         lines += ["", f"Latency ratio: {lat_z / lat_t:.1f}x."]
     for metric in ("giou", "ciou"):

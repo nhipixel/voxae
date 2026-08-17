@@ -158,3 +158,59 @@ def test_ablation_table_deltas_against_the_control(tmp_path: Path):
 
 def test_ablation_table_is_empty_without_tagged_reports(results_dir: Path):
     assert results_table.ablations(results_table.load(results_dir), "base") == []
+
+
+def _records(path: Path, rows: list[tuple[str, float]]) -> None:
+    path.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "sample_id": f"s{i}",
+                    "family": fam,
+                    "iou": 0.5,
+                    "intersection": 1,
+                    "union": 2,
+                    "latency_s": lat,
+                    "failed": False,
+                }
+            )
+            for i, (fam, lat) in enumerate(rows)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_counts_are_backfilled_from_records(tmp_path: Path):
+    """Reports predating the per-family counts still have to produce a table."""
+    old = {k: v for k, v in report("trained").items() if not k.startswith("n_")}
+    (tmp_path / "eval_trained_test.json").write_text(json.dumps(old), encoding="utf-8")
+    _records(
+        tmp_path / "eval_trained_test.records.jsonl",
+        [("affordance", 1.0), ("affordance", 1.0), ("referring", 1.0)],
+    )
+    loaded = results_table.load(tmp_path)[0]
+    assert loaded["n_all"] == 3
+    assert loaded["n_affordance"] == 2
+    assert loaded["n_referring"] == 1
+
+
+def test_latency_is_taken_from_every_record(tmp_path: Path):
+    """The aggregate field covered only a resumed run's final session."""
+    (tmp_path / "eval_trained_test.json").write_text(
+        json.dumps(report("trained", latency_s_mean=99.0)), encoding="utf-8"
+    )
+    _records(
+        tmp_path / "eval_trained_test.records.jsonl",
+        [("affordance", 1.0), ("affordance", 2.0), ("referring", 3.0)],
+    )
+    loaded = results_table.load(tmp_path)[0]
+    assert loaded["latency_s_mean"] == pytest.approx(2.0)
+    assert loaded["_latency_from_records"] is True
+
+
+def test_a_report_without_records_is_left_alone(results_dir: Path):
+    """No records file means nothing to backfill, not a crash."""
+    loaded = results_table.load(results_dir)
+    assert all("_latency_from_records" not in r for r in loaded)
+    assert loaded[0]["latency_s_mean"] in (0.25, 20.8)
