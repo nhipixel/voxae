@@ -1,9 +1,11 @@
 import UseCases from "@/components/UseCases";
 import Workbench from "@/components/Workbench";
 
+// Counts are the test split's own, not estimates: scripts/results_table.py
+// prints this array from the eval reports and checks it against the dataset.
 const RECORD = [
-  { split: "Affordance questions", trained: "0.421", zero: "0.290", n: "222" },
-  { split: "Referring questions", trained: "0.399", zero: "0.538", n: "84" },
+  { split: "Affordance questions", trained: "0.421", zero: "0.290", n: "206" },
+  { split: "Referring questions", trained: "0.399", zero: "0.538", n: "100" },
   { split: "All", trained: "0.414", zero: "0.371", n: "306" },
 ];
 
