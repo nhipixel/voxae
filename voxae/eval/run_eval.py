@@ -132,6 +132,10 @@ def evaluate(
         scores = aggregate(by_family[key])
         report[f"giou_{key}"] = round(scores["giou"], 4)
         report[f"ciou_{key}"] = round(scores["ciou"], 4)
+        # The per-family count belongs in the report. Without it, anyone
+        # quoting a per-family score has to estimate the denominator, and an
+        # estimate that reads as measured is how a wrong n reaches a website.
+        report[f"n_{key}"] = len(by_family[key])
     return report
 
 
@@ -163,6 +167,13 @@ def main() -> None:
     parser.add_argument(
         "--dtype", help="backbone dtype; defaults to bfloat16 on cuda, float32 on cpu"
     )
+    # Reports default into the data root, which is gitignored and, on a hosted
+    # runtime, is not the directory that gets copied back. Pointing them
+    # somewhere durable is what stops a finished run from evaporating.
+    parser.add_argument(
+        "--out-dir", type=Path, help="where reports and records go (default: the data root)"
+    )
+    parser.add_argument("--tag", default="", help="suffix for the filenames, to keep runs apart")
     args = parser.parse_args()
 
     from voxae.train.collate import load_samples
@@ -186,15 +197,22 @@ def main() -> None:
     else:
         predictor = _ZeroShotAdapter()
 
-    ann = args.data_root / "processed" / "annotations"
-    records_path = ann / f"eval_{args.predictor}_{args.split}.records.jsonl"
+    out_dir = args.out_dir or (args.data_root / "processed" / "annotations")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"eval_{args.predictor}_{args.split}{f'__{args.tag}' if args.tag else ''}"
+    records_path = out_dir / f"{stem}.records.jsonl"
     report = {
         "predictor": args.predictor,
         "split": args.split,
+        # What produced the numbers, beside the numbers. A report that cannot
+        # name its checkpoint cannot be reproduced or told apart from another.
+        "tag": args.tag or None,
+        "checkpoint": str(args.checkpoint) if args.checkpoint else None,
+        "backbone": args.backbone if args.predictor == "trained" else None,
         **evaluate(predictor, samples, args.data_root, records_path=records_path),
     }
     print(json.dumps(report, indent=2))
-    out = ann / f"eval_{args.predictor}_{args.split}.json"
+    out = out_dir / f"{stem}.json"
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"saved -> {out}")
     print(f"per-sample records -> {records_path}")
