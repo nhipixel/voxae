@@ -122,7 +122,13 @@ def evaluate(
     report: dict = {
         "n": len(samples),
         "failures": sum(r["failed"] for r in records),
-        "latency_s_mean": round(float(np.mean(latencies)), 3) if latencies else None,
+        # Over every record, not over `latencies`. That list holds only the
+        # samples this session computed, so on a resumed run it reports the mean
+        # of whatever was left rather than the mean per query. The failure count
+        # and the IoU aggregates already read from records; this now matches.
+        "latency_s_mean": (
+            round(float(np.mean([r["latency_s"] for r in records])), 3) if records else None
+        ),
     }
     by_family: dict[str, list[dict]] = defaultdict(list)
     for r in records:

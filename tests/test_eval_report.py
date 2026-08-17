@@ -106,3 +106,18 @@ def test_records_resume_without_recalling_the_predictor(data_root: Path, samples
     assert second["failures"] == 0
     assert second["giou_all"] == pytest.approx(first["giou_all"])
     assert second["n_affordance"] == 2
+
+
+def test_latency_covers_resumed_samples_too(data_root: Path, samples, tmp_path: Path):
+    """A resumed run must report the mean per query, not the mean of the tail.
+
+    The published zero-shot latency came from a resumed run, so it was the mean
+    over whatever the final session happened to recompute.
+    """
+    records = tmp_path / "records.jsonl"
+    first = evaluate(_Half(), samples, data_root, log_every=0, records_path=records)
+
+    # Everything resumes, so nothing is timed this pass.
+    second = evaluate(_Half(), samples, data_root, log_every=0, records_path=records)
+    assert second["latency_s_mean"] is not None
+    assert second["latency_s_mean"] == pytest.approx(first["latency_s_mean"], abs=1e-3)
