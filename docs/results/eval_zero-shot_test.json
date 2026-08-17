@@ -1,0 +1,13 @@
+{
+  "predictor": "zero-shot",
+  "split": "test",
+  "n": 306,
+  "failures": 1,
+  "latency_s_mean": 20.765,
+  "giou_affordance": 0.2895,
+  "ciou_affordance": 0.2903,
+  "giou_all": 0.3707,
+  "ciou_all": 0.3073,
+  "giou_referring": 0.5381,
+  "ciou_referring": 0.4944
+}

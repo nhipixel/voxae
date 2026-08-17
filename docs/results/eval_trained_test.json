@@ -1,0 +1,13 @@
+{
+  "predictor": "trained",
+  "split": "test",
+  "n": 306,
+  "failures": 0,
+  "latency_s_mean": 0.252,
+  "giou_affordance": 0.4209,
+  "ciou_affordance": 0.5108,
+  "giou_all": 0.4138,
+  "ciou_all": 0.5023,
+  "giou_referring": 0.3991,
+  "ciou_referring": 0.393
+}
